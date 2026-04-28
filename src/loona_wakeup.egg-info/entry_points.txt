@@ -1,0 +1,2 @@
+[console_scripts]
+loona-wakeup = loona_wakeup.app:run

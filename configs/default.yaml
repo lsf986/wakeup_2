@@ -1,0 +1,49 @@
+runtime:
+  mode: local
+  ui_refresh_ms: 100
+  decision_interval_ms: 100
+
+wakeup:
+  min_confidence: 0.66
+  min_voice_score: 0.38
+  max_distance_m: 2.0
+  min_gaze_score: 0.38
+  min_lip_score: 0.24
+  min_visual_intent_score: 0.45
+  max_head_yaw_deg: 30.0
+  require_face_visible: true
+  require_lip_sync: true
+  min_consecutive_wakeup_frames: 3
+  utterance_end_silence_ms: 350
+  min_utterance_ms: 220
+  max_utterance_ms: 8000
+  decision_window_ms: 1200
+  cooldown_ms: 1500
+
+weights:
+  voice_score: 0.25
+  sound_position: 0.20
+  distance_score: 0.15
+  head_pose_score: 0.15
+  gaze_score: 0.15
+  lip_score: 0.20
+  attention_bonus: 0.10
+  background_penalty: -0.20
+
+logging:
+  enabled: true
+  path: logs/decisions.jsonl
+
+live_udp:
+  host: 127.0.0.1
+  port: 8765
+  poll_interval_ms: 30
+  max_datagram_size: 65535
+
+local_input:
+  camera_index: 0
+  frame_interval_ms: 80
+  audio_sample_rate: 16000
+  audio_block_size: 1024
+  min_audio_energy: 0.010
+  min_mouth_motion: 0.008
