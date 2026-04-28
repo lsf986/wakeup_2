@@ -12,6 +12,7 @@
 - 本地麦克风人声能量、周期性和语音质量检测，降低吹气、气流声、短促咳嗽等非语音误触发。
 - 句内意图一致性、目标稳定性、声源方向和人脸方向匹配判断。
 - 多人互相对话抑制，降低两个人聊天时误唤醒 Loona 的概率。
+- 可选 ASR 文本分析，辅助判断语句完整性、是否对 Loona 发起交互、是否像自言自语。
 - Mock 多模态数据流。
 - Live UDP 多模态数据接入。
 - 规则加权版 WakeupDecisionEngine。
@@ -101,12 +102,13 @@ runtime:
 	"gaze_to_loona_score": 0.82,
 	"lip_movement_score": 0.78,
 	"is_attention_target": true,
+	"transcript": "露娜帮我打开灯",
 	"scene_type": "live",
 	"background_audio_score": 0.05
 }
 ```
 
-也支持常见别名字段：`target_user_id`、`voice`、`vad`、`direction_deg`、`visual_direction_deg`、`sound_face_match`、`not_addressing_loona`、`distance_m`、`head_yaw`、`gaze_score`、`lip_score`、`attention_target`、`background_score`。
+也支持常见别名字段：`target_user_id`、`voice`、`vad`、`direction_deg`、`visual_direction_deg`、`sound_face_match`、`not_addressing_loona`、`asr_text`、`text`、`utterance_text`、`text_completeness`、`direct_address`、`self_talk`、`distance_m`、`head_yaw`、`gaze_score`、`lip_score`、`attention_target`、`background_score`。
 
 默认策略偏保守：需要可靠人声、可见人脸和唇动同步，才允许触发唤醒。若底层暂时无法稳定输出 `face_visible` 或 `lip_movement_score`，可以在 [configs/default.yaml](configs/default.yaml) 中临时关闭：
 
@@ -129,9 +131,14 @@ wakeup:
 	min_target_stability_score: 0.75
 	min_sound_face_match_score: 0.45
 	max_human_conversation_score: 0.62
+	min_text_completeness_score: 0.45
+	min_direct_address_score: 0.30
+	max_self_talk_score: 0.62
 ```
 
-这可以过滤底层人声、唇动或视线的单帧抖动，也会拒绝咳嗽这类过短的非语音爆发声、句内意图不连续、多人目标不稳定、声源方向和人脸方向明显不一致，以及两个人互相对话但没有对 Loona 说话的情况。
+这可以过滤底层人声、唇动或视线的单帧抖动，也会拒绝咳嗽这类过短的非语音爆发声、句内意图不连续、多人目标不稳定、声源方向和人脸方向明显不一致、两个人互相对话但没有对 Loona 说话，以及有 ASR 文本时的短语气词/自言自语。
+
+文本分析是可选层：没有 `transcript` 或外部文本分数时，现有视觉和音频唤醒逻辑保持不变；接入 ASR 后，规则分析器会根据语句完整性、直接寻址词、问句/祈使句和自言自语词给出辅助拒绝。
 
 可用测试脚本模拟底层输出：
 

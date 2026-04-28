@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from math import isfinite
 
+from loona_wakeup.engine.utterance_text_analyzer import analyze_utterance_text
 from loona_wakeup.models import MultimodalFrame, WakeupConfig, WakeupDecision, WeightConfig
 
 
@@ -146,6 +147,8 @@ class WakeupDecisionEngine:
         target_stability_score = self._target_stability_score(source_frames, target_track_id)
         sound_face_match_score = self._aggregate_sound_face_match_score(source_frames)
         human_conversation_score = self._aggregate_human_conversation_score(source_frames)
+        transcript = self._aggregate_transcript(source_frames)
+        text_scores = self._aggregate_text_scores(source_frames, transcript)
         return MultimodalFrame(
             timestamp_ms=frames[-1].timestamp_ms,
             user_id=best_visual.user_id or best_voice.user_id,
@@ -170,6 +173,10 @@ class WakeupDecisionEngine:
             intent_consistency_score=intent_consistency_score,
             target_stability_score=target_stability_score,
             human_conversation_score=human_conversation_score,
+            transcript=transcript,
+            text_completeness_score=text_scores["text_completeness_score"],
+            direct_address_score=text_scores["direct_address_score"],
+            self_talk_score=text_scores["self_talk_score"],
             scene_type="utterance_aggregate",
             background_audio_score=min(frame.background_audio_score for frame in source_frames),
         )
@@ -215,6 +222,28 @@ class WakeupDecisionEngine:
             return 0.0
         return sum(_clamp(frame.human_conversation_score) for frame in source_frames) / len(source_frames)
 
+    def _aggregate_transcript(self, frames: list[MultimodalFrame]) -> str:
+        transcripts = [frame.transcript.strip() for frame in frames if frame.transcript.strip()]
+        return max(transcripts, key=len, default="")
+
+    def _aggregate_text_scores(self, frames: list[MultimodalFrame], transcript: str) -> dict[str, float]:
+        direct_address_score = max((_clamp(frame.direct_address_score) for frame in frames), default=0.0)
+        self_talk_score = max((_clamp(frame.self_talk_score) for frame in frames), default=0.0)
+        completeness_scores = [frame.text_completeness_score for frame in frames if frame.text_completeness_score != 1.0]
+        text_completeness_score = min((_clamp(score) for score in completeness_scores), default=1.0)
+
+        if transcript:
+            analysis = analyze_utterance_text(transcript)
+            direct_address_score = max(direct_address_score, analysis.direct_address_score)
+            self_talk_score = max(self_talk_score, analysis.self_talk_score)
+            text_completeness_score = min(text_completeness_score, analysis.completeness_score)
+
+        return {
+            "text_completeness_score": text_completeness_score,
+            "direct_address_score": direct_address_score,
+            "self_talk_score": self_talk_score,
+        }
+
     def _stable_lip_score(self, frames: list[MultimodalFrame]) -> float:
         lip_scores = [_clamp(frame.lip_movement_score) for frame in frames]
         if not lip_scores:
@@ -246,6 +275,9 @@ class WakeupDecisionEngine:
             "intent_consistency_score": _clamp(frame.intent_consistency_score),
             "target_stability_score": _clamp(frame.target_stability_score),
             "human_conversation_score": _clamp(frame.human_conversation_score),
+            "text_completeness_score": _clamp(frame.text_completeness_score),
+            "direct_address_score": _clamp(frame.direct_address_score),
+            "self_talk_score": _clamp(frame.self_talk_score),
             "attention_score": 1.0 if frame.is_attention_target else 0.0,
             "background_audio_score": _clamp(frame.background_audio_score),
         }
@@ -265,6 +297,13 @@ class WakeupDecisionEngine:
                 reasons.append("target_not_stable")
             if frame.multi_person_count > 1 and raw_scores["human_conversation_score"] > self.wakeup_config.max_human_conversation_score:
                 reasons.append("human_conversation_detected")
+            if self._has_text_signal(frame):
+                if raw_scores["text_completeness_score"] < self.wakeup_config.min_text_completeness_score:
+                    reasons.append("incomplete_utterance_text")
+                if raw_scores["self_talk_score"] > self.wakeup_config.max_self_talk_score:
+                    reasons.append("self_talk_detected")
+                if raw_scores["direct_address_score"] < self.wakeup_config.min_direct_address_score and raw_scores["self_talk_score"] >= 0.30:
+                    reasons.append("no_direct_address")
         if raw_scores["sound_face_match_score"] < self.wakeup_config.min_sound_face_match_score:
             reasons.append("sound_face_mismatch")
         if frame.multi_person_ambiguous:
@@ -290,6 +329,9 @@ class WakeupDecisionEngine:
         if self.wakeup_config.require_lip_sync and raw_scores["lip_score"] < self.wakeup_config.min_lip_score:
             reasons.append("no_lip_voice_sync")
         return reasons
+
+    def _has_text_signal(self, frame: MultimodalFrame) -> bool:
+        return bool(frame.transcript.strip()) or frame.direct_address_score > 0.0 or frame.self_talk_score > 0.0 or frame.text_completeness_score != 1.0
 
     def _reasons(self, frame: MultimodalFrame, raw_scores: dict[str, float]) -> list[str]:
         reasons: list[str] = []

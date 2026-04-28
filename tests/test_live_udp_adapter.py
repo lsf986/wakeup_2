@@ -13,6 +13,10 @@ def test_frame_from_payload_supports_alias_fields() -> None:
             "visual_direction_deg": -3,
             "sound_face_match": "0.8",
             "not_addressing_loona": "0.72",
+            "asr_text": "露娜帮我打开灯",
+            "text_completeness": "0.9",
+            "direct_address": "0.8",
+            "self_talk": "0.1",
             "distance_m": 0.8,
             "face_visible": True,
             "head_yaw": 3,
@@ -32,6 +36,10 @@ def test_frame_from_payload_supports_alias_fields() -> None:
     assert frame.face_direction_deg == -3
     assert frame.sound_face_match_score == 0.8
     assert frame.human_conversation_score == 0.72
+    assert frame.transcript == "露娜帮我打开灯"
+    assert frame.text_completeness_score == 0.9
+    assert frame.direct_address_score == 0.8
+    assert frame.self_talk_score == 0.1
     assert frame.sound_distance_m == 0.8
     assert frame.gaze_to_loona_score == 0.7
     assert frame.lip_movement_score == 0.6

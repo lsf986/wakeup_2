@@ -72,6 +72,103 @@ def test_valid_utterance_triggers_after_aggregation() -> None:
     assert decision.raw_scores["consecutive_wakeup_candidates"] == 0.0
 
 
+def test_valid_utterance_without_transcript_keeps_existing_behavior() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    frames = [
+        MultimodalFrame(
+            timestamp_ms=timestamp_ms,
+            user_id="user_01",
+            has_voice=True,
+            voice_energy=0.9,
+            speech_like_score=0.9,
+            sound_direction_deg=0,
+            sound_distance_m=0.8,
+            face_visible=True,
+            head_yaw_deg=0,
+            gaze_to_loona_score=0.8,
+            lip_movement_score=0.8,
+            is_attention_target=True,
+        )
+        for timestamp_ms in (0, 160, 320)
+    ]
+    assert engine.decide_utterance(frames).wakeup is True
+
+
+def test_direct_address_transcript_can_wake() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    frames = [
+        MultimodalFrame(
+            timestamp_ms=timestamp_ms,
+            user_id="user_01",
+            has_voice=True,
+            voice_energy=0.9,
+            speech_like_score=0.9,
+            sound_direction_deg=0,
+            sound_distance_m=0.8,
+            face_visible=True,
+            head_yaw_deg=0,
+            gaze_to_loona_score=0.8,
+            lip_movement_score=0.8,
+            is_attention_target=True,
+            transcript="露娜帮我打开灯",
+        )
+        for timestamp_ms in (0, 160, 320)
+    ]
+    decision = engine.decide_utterance(frames)
+    assert decision.wakeup is True
+    assert decision.raw_scores["direct_address_score"] >= 0.30
+
+
+def test_self_talk_transcript_is_rejected() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    frames = [
+        MultimodalFrame(
+            timestamp_ms=timestamp_ms,
+            user_id="user_01",
+            has_voice=True,
+            voice_energy=0.9,
+            speech_like_score=0.9,
+            sound_direction_deg=0,
+            sound_distance_m=0.8,
+            face_visible=True,
+            head_yaw_deg=0,
+            gaze_to_loona_score=0.8,
+            lip_movement_score=0.8,
+            is_attention_target=True,
+            transcript="我想想这个应该怎么做",
+        )
+        for timestamp_ms in (0, 160, 320)
+    ]
+    decision = engine.decide_utterance(frames)
+    assert decision.wakeup is False
+    assert "self_talk_detected" in decision.reject_reasons
+
+
+def test_incomplete_transcript_is_rejected() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    frames = [
+        MultimodalFrame(
+            timestamp_ms=timestamp_ms,
+            user_id="user_01",
+            has_voice=True,
+            voice_energy=0.9,
+            speech_like_score=0.9,
+            sound_direction_deg=0,
+            sound_distance_m=0.8,
+            face_visible=True,
+            head_yaw_deg=0,
+            gaze_to_loona_score=0.8,
+            lip_movement_score=0.8,
+            is_attention_target=True,
+            transcript="嗯",
+        )
+        for timestamp_ms in (0, 160, 320)
+    ]
+    decision = engine.decide_utterance(frames)
+    assert decision.wakeup is False
+    assert "incomplete_utterance_text" in decision.reject_reasons
+
+
 def test_medium_strength_utterance_triggers_with_sensitive_defaults() -> None:
     engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
     decision = engine.decide_utterance(

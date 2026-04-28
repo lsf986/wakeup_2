@@ -36,6 +36,10 @@ class MultimodalFrame:
     intent_consistency_score: float = 1.0
     target_stability_score: float = 1.0
     human_conversation_score: float = 0.0
+    transcript: str = ""
+    text_completeness_score: float = 1.0
+    direct_address_score: float = 0.0
+    self_talk_score: float = 0.0
     scene_type: str = "unknown"
     background_audio_score: float = 0.0
 
@@ -94,6 +98,9 @@ class WakeupConfig:
     min_target_stability_score: float = 0.75
     min_sound_face_match_score: float = 0.45
     max_human_conversation_score: float = 0.62
+    min_text_completeness_score: float = 0.45
+    min_direct_address_score: float = 0.30
+    max_self_talk_score: float = 0.62
     max_utterance_ms: int = 8000
     decision_window_ms: int = 1200
     cooldown_ms: int = 1500

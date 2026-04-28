@@ -22,6 +22,9 @@ wakeup:
   min_target_stability_score: 0.75
   min_sound_face_match_score: 0.45
   max_human_conversation_score: 0.62
+  min_text_completeness_score: 0.45
+  min_direct_address_score: 0.30
+  max_self_talk_score: 0.62
   max_utterance_ms: 8000
   decision_window_ms: 1200
   cooldown_ms: 1500
