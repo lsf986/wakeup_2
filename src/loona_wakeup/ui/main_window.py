@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -27,6 +28,7 @@ class MainWindow(QMainWindow):
         self._running = True
         self._mode = mode
         self._source_status = mode
+        self._last_wakeup_feedback_ms = -WAKEUP_HOLD_MS
         self._wakeup_hold_timer = QTimer(self)
         self._wakeup_hold_timer.setSingleShot(True)
         self._wakeup_hold_timer.timeout.connect(self._set_idle_state)
@@ -100,6 +102,7 @@ class MainWindow(QMainWindow):
 
         if decision.wakeup:
             self._set_wakeup_state()
+            self._play_wakeup_feedback(decision.timestamp_ms)
             self._wakeup_hold_timer.start(WAKEUP_HOLD_MS)
         elif not self._wakeup_hold_timer.isActive():
             self._set_idle_state()
@@ -108,6 +111,13 @@ class MainWindow(QMainWindow):
         self.state_label.setText("WAKEUP")
         self.state_label.setObjectName("StateWakeup")
         self._refresh_state_style()
+
+    def _play_wakeup_feedback(self, timestamp_ms: int) -> None:
+        if timestamp_ms - self._last_wakeup_feedback_ms < WAKEUP_HOLD_MS:
+            return
+        self._last_wakeup_feedback_ms = timestamp_ms
+        QApplication.beep()
+        self.camera_preview.flash_wakeup_border()
 
     def _set_idle_state(self) -> None:
         self.state_label.setText("IDLE")

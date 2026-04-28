@@ -240,6 +240,7 @@ class LocalCameraMicAdapter(QObject):
         lip_motion = 0.0
         distance_m: float | None = None
         direction_deg: float | None = None
+        human_conversation_score = 0.0
 
         if mesh_result is not None:
             direction_deg = mesh_result["direction_deg"]
@@ -247,6 +248,7 @@ class LocalCameraMicAdapter(QObject):
             gaze_score = mesh_result["gaze_score"]
             distance_m = mesh_result["distance_m"]
             lip_motion = mesh_result["lip_motion"]
+            human_conversation_score = mesh_result.get("human_conversation_score", 0.0)
             self._draw_face_mesh_overlays(rgb, mesh_result)
             if mesh_result.get("multi_person_ambiguous"):
                 gaze_score = 0.0
@@ -293,6 +295,7 @@ class LocalCameraMicAdapter(QObject):
             target_track_id=mesh_result.get("candidate_id") if mesh_result is not None else None,
             multi_person_count=int(mesh_result.get("multi_person_count", 0)) if mesh_result is not None else 0,
             multi_person_ambiguous=bool(mesh_result.get("multi_person_ambiguous", False)) if mesh_result is not None else False,
+            human_conversation_score=human_conversation_score,
             scene_type="local_camera_mic",
             background_audio_score=0.0 if face_visible else min(1.0, speech_like),
         )
@@ -403,6 +406,7 @@ class LocalCameraMicAdapter(QObject):
         selected["candidates"] = candidates
         selected["multi_person_count"] = len(candidates)
         selected["multi_person_ambiguous"] = ambiguous
+        selected["human_conversation_score"] = self._human_conversation_score(candidates, selected, ambiguous)
         self._drop_stale_tracks(used_track_ids)
         return selected
 
@@ -482,6 +486,31 @@ class LocalCameraMicAdapter(QObject):
         if len(ranked) >= 2 and ranked[0]["candidate_score"] - ranked[1]["candidate_score"] < MULTI_PERSON_SELECTION_MARGIN:
             return None, True
         return ranked[0], False
+
+    def _human_conversation_score(self, candidates: list[dict[str, Any]], selected: dict[str, Any], ambiguous: bool) -> float:
+        if len(candidates) < 2:
+            return 0.0
+        active_lips = [candidate.get("lip_motion", 0.0) for candidate in candidates if candidate.get("lip_motion", 0.0) >= self._config.min_mouth_motion]
+        if not active_lips:
+            return 0.0
+
+        gaze_score = _clamp_local(selected.get("gaze_score", 0.0))
+        facing_score = _head_facing_score_local(selected.get("head_yaw_deg"))
+        direction_score = _direction_score_local(selected.get("direction_deg"))
+        low_loona_attention = _clamp_local((0.65 - gaze_score) / 0.65)
+
+        lip_scores = sorted((candidate.get("lip_motion", 0.0) for candidate in candidates), reverse=True)
+        second_lip_ratio = lip_scores[1] / max(lip_scores[0], 1e-6) if len(lip_scores) >= 2 else 0.0
+        shared_lip_activity = _clamp_local((second_lip_ratio - 0.35) / 0.45) if len(active_lips) >= 2 else 0.0
+        off_axis_score = 1.0 - max(facing_score, direction_score)
+        ambiguous_score = 0.35 if ambiguous else 0.0
+
+        return _clamp_local(
+            (0.65 * low_loona_attention)
+            + (0.22 * shared_lip_activity)
+            + (0.13 * off_axis_score)
+            + ambiguous_score
+        )
 
     def _assign_track_id(self, face: tuple[int, int, int, int], used_track_ids: set[str] | None = None) -> str:
         used_track_ids = used_track_ids if used_track_ids is not None else set()

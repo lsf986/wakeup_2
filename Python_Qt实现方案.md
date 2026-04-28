@@ -107,6 +107,7 @@ Qt MainWindow
 - 基于人脸中心和眼部关键点估计注视 Loona 的程度。
 - 基于人脸位置维护稳定 `track_id`，避免多人顺序变化导致候选人跳变。
 - 输出人脸方向和声源方向匹配分，用于过滤画面内外错配。
+- 多人场景输出 `human_conversation_score`，用于抑制两个人互相对话造成的误唤醒。
 - FaceMesh 失败时，回退到 OpenCV Haar 人脸/眼睛检测。
 - Haar 回退路径中，未检测到眼睛时使用正脸程度作为注视估计兜底。
 - `sounddevice.InputStream` 计算麦克风 RMS 能量。
@@ -151,7 +152,7 @@ Qt MainWindow
 }
 ```
 
-也支持常见别名字段，例如 `target_user_id`、`voice`、`vad`、`direction_deg`、`visual_direction_deg`、`sound_face_match`、`distance_m`、`head_yaw`、`gaze_score`、`lip_score`、`attention_target`、`background_score`。
+也支持常见别名字段，例如 `target_user_id`、`voice`、`vad`、`direction_deg`、`visual_direction_deg`、`sound_face_match`、`not_addressing_loona`、`distance_m`、`head_yaw`、`gaze_score`、`lip_score`、`attention_target`、`background_score`。
 
 ### 4.3 mock 模式
 
@@ -183,6 +184,8 @@ class MultimodalFrame:
     voice_energy: float = 0.0
     speech_like_score: float = 0.0
     sound_direction_deg: float | None = None
+    face_direction_deg: float | None = None
+    sound_face_match_score: float = 1.0
     sound_distance_m: float | None = None
     face_visible: bool = False
     head_yaw_deg: float | None = None
@@ -195,6 +198,9 @@ class MultimodalFrame:
     multi_person_ambiguous: bool = False
     utterance_voice_ms: int = 0
     utterance_voice_frame_count: int = 0
+    intent_consistency_score: float = 1.0
+    target_stability_score: float = 1.0
+    human_conversation_score: float = 0.0
     scene_type: str = "unknown"
     background_audio_score: float = 0.0
 ```
@@ -237,6 +243,7 @@ wakeup:
   min_intent_consistency_score: 0.45
   min_target_stability_score: 0.75
   min_sound_face_match_score: 0.45
+  max_human_conversation_score: 0.62
   max_utterance_ms: 8000
 ```
 
@@ -248,6 +255,7 @@ wakeup:
 - `min_intent_consistency_score` 要求说话期间朝向、注视、唇动等意图信号持续一致。
 - `min_target_stability_score` 要求多人场景中主候选人在一句话内保持稳定。
 - `min_sound_face_match_score` 要求声源方向和人脸方向不要明显错配。
+- `max_human_conversation_score` 用于抑制多人互相对话但没有对 Loona 说话的场景。
 
 ## 7. 唤醒融合判断
 
@@ -273,6 +281,7 @@ wakeup:
 - `intent_not_consistent`：说话期间意图信号不连续。
 - `target_not_stable`：多人场景中主候选目标不稳定。
 - `sound_face_mismatch`：声源方向和人脸方向明显不一致。
+- `human_conversation_detected`：多人场景疑似人与人互相对话，而不是对 Loona 说话。
 - `face_not_visible`：配置要求人脸可见但当前不可见。
 - `distance_too_far`：距离超过最大交互距离。
 - `background_audio_without_lip_sync`：背景音明显且无唇动同步。

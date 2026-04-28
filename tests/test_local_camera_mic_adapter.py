@@ -345,6 +345,36 @@ def test_stale_track_cleanup_removes_histories() -> None:
     assert track_id not in adapter._gaze_states
 
 
+def test_human_conversation_score_rises_when_two_people_do_not_address_loona() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig(min_mouth_motion=0.008))
+    selected = {
+        "lip_motion": 0.04,
+        "gaze_score": 0.05,
+        "head_yaw_deg": 26.0,
+        "direction_deg": 24.0,
+    }
+    candidates = [
+        selected,
+        {"lip_motion": 0.035, "gaze_score": 0.04, "head_yaw_deg": -24.0, "direction_deg": -22.0},
+    ]
+    assert adapter._human_conversation_score(candidates, selected, ambiguous=False) > 0.62
+
+
+def test_human_conversation_score_stays_low_when_target_addresses_loona() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig(min_mouth_motion=0.008))
+    selected = {
+        "lip_motion": 0.04,
+        "gaze_score": 0.9,
+        "head_yaw_deg": 0.0,
+        "direction_deg": 0.0,
+    }
+    candidates = [
+        selected,
+        {"lip_motion": 0.035, "gaze_score": 0.1, "head_yaw_deg": -24.0, "direction_deg": -22.0},
+    ]
+    assert adapter._human_conversation_score(candidates, selected, ambiguous=False) < 0.62
+
+
 def test_candidate_score_requires_lip_motion() -> None:
     adapter = LocalCameraMicAdapter(LocalInputConfig(min_mouth_motion=0.008))
     assert (

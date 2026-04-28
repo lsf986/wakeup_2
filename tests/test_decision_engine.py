@@ -246,6 +246,61 @@ def test_missing_target_frames_in_multi_person_utterance_are_rejected() -> None:
     assert "target_not_stable" in decision.reject_reasons
 
 
+def test_human_conversation_in_multi_person_utterance_is_rejected() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    frames = [
+        MultimodalFrame(
+            timestamp_ms=timestamp_ms,
+            user_id="local_user_0",
+            has_voice=True,
+            voice_energy=0.9,
+            speech_like_score=0.9,
+            sound_direction_deg=0,
+            face_direction_deg=0,
+            sound_distance_m=0.8,
+            face_visible=True,
+            head_yaw_deg=0,
+            gaze_to_loona_score=0.9,
+            lip_movement_score=0.8,
+            is_attention_target=True,
+            target_track_id="local_user_0",
+            multi_person_count=2,
+            human_conversation_score=0.82,
+        )
+        for timestamp_ms in (0, 160, 320)
+    ]
+    decision = engine.decide_utterance(frames)
+    assert decision.wakeup is False
+    assert "human_conversation_detected" in decision.reject_reasons
+
+
+def test_multi_person_utterance_can_wake_when_addressing_loona() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    frames = [
+        MultimodalFrame(
+            timestamp_ms=timestamp_ms,
+            user_id="local_user_0",
+            has_voice=True,
+            voice_energy=0.9,
+            speech_like_score=0.9,
+            sound_direction_deg=0,
+            face_direction_deg=0,
+            sound_distance_m=0.8,
+            face_visible=True,
+            head_yaw_deg=0,
+            gaze_to_loona_score=0.9,
+            lip_movement_score=0.8,
+            is_attention_target=True,
+            target_track_id="local_user_0",
+            multi_person_count=2,
+            human_conversation_score=0.2,
+        )
+        for timestamp_ms in (0, 160, 320)
+    ]
+    decision = engine.decide_utterance(frames)
+    assert decision.wakeup is True
+
+
 def test_background_audio_is_rejected() -> None:
     engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
     decision = engine.decide(

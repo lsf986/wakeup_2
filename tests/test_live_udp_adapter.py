@@ -12,6 +12,7 @@ def test_frame_from_payload_supports_alias_fields() -> None:
             "direction_deg": -5,
             "visual_direction_deg": -3,
             "sound_face_match": "0.8",
+            "not_addressing_loona": "0.72",
             "distance_m": 0.8,
             "face_visible": True,
             "head_yaw": 3,
@@ -30,6 +31,7 @@ def test_frame_from_payload_supports_alias_fields() -> None:
     assert frame.sound_direction_deg == -5
     assert frame.face_direction_deg == -3
     assert frame.sound_face_match_score == 0.8
+    assert frame.human_conversation_score == 0.72
     assert frame.sound_distance_m == 0.8
     assert frame.gaze_to_loona_score == 0.7
     assert frame.lip_movement_score == 0.6
