@@ -8,7 +8,6 @@ from typing import Any
 class RunMode(str, Enum):
     MOCK = "mock"
     LOCAL = "local"
-    REPLAY = "replay"
     LIVE = "live"
 
 
@@ -30,6 +29,8 @@ class MultimodalFrame:
     target_track_id: str | None = None
     multi_person_count: int = 0
     multi_person_ambiguous: bool = False
+    utterance_voice_ms: int = 0
+    utterance_voice_frame_count: int = 0
     scene_type: str = "unknown"
     background_audio_score: float = 0.0
 
@@ -82,6 +83,8 @@ class WakeupConfig:
     min_consecutive_wakeup_frames: int = 3
     utterance_end_silence_ms: int = 350
     min_utterance_ms: int = 220
+    min_wakeup_voice_ms: int = 320
+    min_wakeup_voice_frames: int = 3
     max_utterance_ms: int = 8000
     decision_window_ms: int = 1200
     cooldown_ms: int = 1500

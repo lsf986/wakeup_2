@@ -16,6 +16,9 @@ def test_frame_from_payload_supports_alias_fields() -> None:
             "gaze_score": 0.7,
             "lip_score": 0.6,
             "attention_target": True,
+            "track_id": "local_user_0",
+            "multi_person_count": "2",
+            "multi_person_ambiguous": "true",
             "background_score": 0.1,
         }
     )
@@ -27,3 +30,6 @@ def test_frame_from_payload_supports_alias_fields() -> None:
     assert frame.gaze_to_loona_score == 0.7
     assert frame.lip_movement_score == 0.6
     assert frame.is_attention_target is True
+    assert frame.target_track_id == "local_user_0"
+    assert frame.multi_person_count == 2
+    assert frame.multi_person_ambiguous is True

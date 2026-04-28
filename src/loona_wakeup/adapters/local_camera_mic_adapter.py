@@ -291,14 +291,16 @@ class LocalCameraMicAdapter(QObject):
         self.frame_ready.emit(frame)
 
     def _emit_empty_frame(self) -> None:
+        speech_score = self._speech_score()
+        voice_energy = min(1.0, self._audio_energy / max(self._config.min_audio_energy * 4.0, 1e-6))
         self.frame_ready.emit(
             MultimodalFrame(
                 timestamp_ms=int(time.time() * 1000),
-                has_voice=self._speech_score() >= 0.45,
-                voice_energy=min(1.0, self._audio_energy / max(self._config.min_audio_energy * 4.0, 1e-6)),
-                speech_like_score=self._speech_score(),
+                has_voice=speech_score >= 0.45,
+                voice_energy=voice_energy,
+                speech_like_score=speech_score,
                 scene_type="local_no_camera",
-                background_audio_score=self._speech_score(),
+                background_audio_score=speech_score,
             )
         )
 

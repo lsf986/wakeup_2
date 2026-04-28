@@ -29,6 +29,7 @@ class LoonaWakeupApp:
             self.adapter.status_changed.connect(self.window.set_runtime_status)
         if hasattr(self.adapter, "preview_ready"):
             self.adapter.preview_ready.connect(self.window.update_camera_frame)
+        self.qt_app.aboutToQuit.connect(self.adapter.stop)
 
     def run(self) -> int:
         self.window.show()
@@ -38,7 +39,6 @@ class LoonaWakeupApp:
     def _on_frame(self, frame: MultimodalFrame) -> None:
         if not self.window.running:
             return
-        self.window.update_frame(frame)
         utterance_frames = self.utterance_gate.push(frame)
         if utterance_frames is None:
             return
@@ -50,7 +50,9 @@ class LoonaWakeupApp:
             return LocalCameraMicAdapter(self.config.local_input)
         if self.config.runtime.mode == RunMode.LIVE:
             return LiveUdpAdapter(self.config.live_udp)
-        return MockAdapter(interval_ms=self.config.runtime.decision_interval_ms)
+        if self.config.runtime.mode == RunMode.MOCK:
+            return MockAdapter(interval_ms=self.config.runtime.decision_interval_ms)
+        raise ValueError(f"Unsupported runtime mode: {self.config.runtime.mode}")
 
 
 def run() -> int:

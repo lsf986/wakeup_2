@@ -12,9 +12,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from loona_wakeup.models import MultimodalFrame, WakeupDecision
+from loona_wakeup.models import WakeupDecision
 from loona_wakeup.ui.camera_preview import CameraPreview
 from loona_wakeup.ui.widgets import panel, titled_panel
+
+WAKEUP_HOLD_MS = 1000
 
 
 class MainWindow(QMainWindow):
@@ -92,16 +94,13 @@ class MainWindow(QMainWindow):
     def running(self) -> bool:
         return self._running
 
-    def update_frame(self, frame: MultimodalFrame) -> None:
-        return
-
     def update_decision(self, decision: WakeupDecision) -> None:
         if not self.running:
             return
 
         if decision.wakeup:
             self._set_wakeup_state()
-            self._wakeup_hold_timer.start(1000)
+            self._wakeup_hold_timer.start(WAKEUP_HOLD_MS)
         elif not self._wakeup_hold_timer.isActive():
             self._set_idle_state()
 
@@ -119,7 +118,3 @@ class MainWindow(QMainWindow):
         self.state_label.style().unpolish(self.state_label)
         self.state_label.style().polish(self.state_label)
 
-    def closeEvent(self, event) -> None:  # type: ignore[override]
-        if hasattr(self, "camera_preview"):
-            self.camera_preview.stop()
-        super().closeEvent(event)

@@ -9,7 +9,7 @@
 - IDLE / WAKEUP 状态显示框实时刷新。
 - MediaPipe FaceMesh 人脸、嘴唇、眼睛关键点检测。
 - 多人同框候选人选择，避免把 A 的注视和 B 的声音拼成误唤醒。
-- 本地麦克风人声能量与语音质量检测，降低吹气、气流声等非语音误触发。
+- 本地麦克风人声能量与语音质量检测，降低吹气、气流声、短促咳嗽等非语音误触发。
 - Mock 多模态数据流。
 - Live UDP 多模态数据接入。
 - 规则加权版 WakeupDecisionEngine。
@@ -121,9 +121,11 @@ wakeup:
 ```yaml
 wakeup:
 	min_consecutive_wakeup_frames: 3
+	min_wakeup_voice_ms: 320
+	min_wakeup_voice_frames: 3
 ```
 
-这可以过滤底层人声、唇动或视线的单帧抖动。
+这可以过滤底层人声、唇动或视线的单帧抖动，也会拒绝咳嗽这类过短的非语音爆发声。
 
 可用测试脚本模拟底层输出：
 

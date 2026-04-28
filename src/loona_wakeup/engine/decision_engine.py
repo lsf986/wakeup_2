@@ -114,6 +114,7 @@ class WakeupDecisionEngine:
     def _aggregate_utterance(self, frames: list[MultimodalFrame]) -> MultimodalFrame:
         voice_frames = [frame for frame in frames if frame.has_voice or frame.speech_like_score >= self.wakeup_config.min_voice_score]
         source_frames = voice_frames or frames
+        voice_duration_ms = self._voice_duration_ms(voice_frames)
         best_voice = max(source_frames, key=lambda frame: (frame.speech_like_score, frame.voice_energy))
         best_visual = max(source_frames, key=lambda frame: frame.gaze_to_loona_score + frame.lip_movement_score)
         strongest_head_yaw = max(
@@ -147,9 +148,16 @@ class WakeupDecisionEngine:
             target_track_id=target_track_id,
             multi_person_count=multi_person_count,
             multi_person_ambiguous=multi_person_ambiguous,
+            utterance_voice_ms=voice_duration_ms,
+            utterance_voice_frame_count=len(voice_frames),
             scene_type="utterance_aggregate",
             background_audio_score=min(frame.background_audio_score for frame in source_frames),
         )
+
+    def _voice_duration_ms(self, voice_frames: list[MultimodalFrame]) -> int:
+        if len(voice_frames) < 2:
+            return 0
+        return max(0, voice_frames[-1].timestamp_ms - voice_frames[0].timestamp_ms)
 
     def _stable_lip_score(self, frames: list[MultimodalFrame]) -> float:
         lip_scores = [_clamp(frame.lip_movement_score) for frame in frames]
@@ -183,6 +191,11 @@ class WakeupDecisionEngine:
         reasons: list[str] = []
         if not frame.has_voice or raw_scores["voice_score"] < self.wakeup_config.min_voice_score:
             reasons.append("no_reliable_voice")
+        if frame.scene_type == "utterance_aggregate":
+            if frame.utterance_voice_frame_count < self.wakeup_config.min_wakeup_voice_frames:
+                reasons.append("voice_burst_too_short")
+            elif frame.utterance_voice_ms < self.wakeup_config.min_wakeup_voice_ms:
+                reasons.append("voice_burst_too_short")
         if frame.multi_person_ambiguous:
             reasons.append("multi_person_ambiguous")
         if self.wakeup_config.require_face_visible and not frame.face_visible:

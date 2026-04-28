@@ -165,11 +165,10 @@ Qt MainWindow
 class RunMode(str, Enum):
     MOCK = "mock"
     LOCAL = "local"
-    REPLAY = "replay"
     LIVE = "live"
 ```
 
-当前实际支持 `mock`、`local`、`live`；`replay` 仅作为预留枚举。
+当前实际支持 `mock`、`local`、`live`。
 
 ### 5.2 MultimodalFrame
 
@@ -189,6 +188,11 @@ class MultimodalFrame:
     gaze_to_loona_score: float = 0.0
     lip_movement_score: float = 0.0
     is_attention_target: bool = False
+    target_track_id: str | None = None
+    multi_person_count: int = 0
+    multi_person_ambiguous: bool = False
+    utterance_voice_ms: int = 0
+    utterance_voice_frame_count: int = 0
     scene_type: str = "unknown"
     background_audio_score: float = 0.0
 ```
@@ -224,8 +228,10 @@ class WakeupDecision:
 
 ```yaml
 wakeup:
-  utterance_end_silence_ms: 700
-  min_utterance_ms: 300
+  utterance_end_silence_ms: 350
+  min_utterance_ms: 220
+  min_wakeup_voice_ms: 320
+  min_wakeup_voice_frames: 3
   max_utterance_ms: 8000
 ```
 
@@ -233,6 +239,7 @@ wakeup:
 
 - `utterance_end_silence_ms` 越小，响应越快，但句中停顿更容易被当成结束。
 - `utterance_end_silence_ms` 越大，判断更稳，但唤醒反馈会更慢。
+- `min_wakeup_voice_ms` 和 `min_wakeup_voice_frames` 用于过滤咳嗽等短促非语音爆发声。
 
 ## 7. 唤醒融合判断
 
@@ -254,6 +261,7 @@ wakeup:
 当前硬拒绝条件包括：
 
 - `no_reliable_voice`：没有可靠人声。
+- `voice_burst_too_short`：有效语音帧数或持续时间过短，按咳嗽/短促声处理。
 - `face_not_visible`：配置要求人脸可见但当前不可见。
 - `distance_too_far`：距离超过最大交互距离。
 - `background_audio_without_lip_sync`：背景音明显且无唇动同步。
@@ -283,12 +291,12 @@ weights:
 
 ```yaml
 wakeup:
-  min_confidence: 0.72
-  min_voice_score: 0.45
+  min_confidence: 0.66
+  min_voice_score: 0.38
   max_distance_m: 2.0
-  min_gaze_score: 0.45
-  min_lip_score: 0.35
-  min_visual_intent_score: 0.55
+  min_gaze_score: 0.38
+  min_lip_score: 0.24
+  min_visual_intent_score: 0.45
   require_face_visible: true
   require_lip_sync: true
 ```

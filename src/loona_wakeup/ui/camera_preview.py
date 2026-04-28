@@ -34,5 +34,3 @@ class CameraPreview(QWidget):
             self.set_frame(self._latest_image)
         super().resizeEvent(event)
 
-    def stop(self) -> None:
-        return

@@ -14,6 +14,7 @@ _FIELD_ALIASES = {
     "timestamp": "timestamp_ms",
     "ts": "timestamp_ms",
     "target_user_id": "user_id",
+    "track_id": "target_track_id",
     "voice": "has_voice",
     "vad": "has_voice",
     "direction_deg": "sound_direction_deg",
@@ -95,6 +96,9 @@ def frame_from_payload(payload: dict[str, Any]) -> MultimodalFrame:
         gaze_to_loona_score=_as_float(normalized.get("gaze_to_loona_score"), 0.0),
         lip_movement_score=_as_float(normalized.get("lip_movement_score"), 0.0),
         is_attention_target=_as_bool(normalized.get("is_attention_target"), False),
+        target_track_id=_as_optional_str(normalized.get("target_track_id")),
+        multi_person_count=_as_int(normalized.get("multi_person_count"), 0),
+        multi_person_ambiguous=_as_bool(normalized.get("multi_person_ambiguous"), False),
         scene_type=str(normalized.get("scene_type") or "live"),
         background_audio_score=_as_float(normalized.get("background_audio_score"), 0.0),
     )

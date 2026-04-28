@@ -77,7 +77,7 @@ def test_medium_strength_utterance_triggers_with_sensitive_defaults() -> None:
     decision = engine.decide_utterance(
         [
             MultimodalFrame(
-                timestamp_ms=1,
+                timestamp_ms=timestamp_ms,
                 user_id="user_01",
                 has_voice=True,
                 voice_energy=0.55,
@@ -90,9 +90,34 @@ def test_medium_strength_utterance_triggers_with_sensitive_defaults() -> None:
                 lip_movement_score=0.30,
                 is_attention_target=True,
             )
+            for timestamp_ms in (0, 160, 320)
         ]
     )
     assert decision.wakeup is True
+
+
+def test_short_cough_like_burst_is_rejected_even_with_lip_motion() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    frames = [
+        MultimodalFrame(
+            timestamp_ms=timestamp_ms,
+            user_id="user_01",
+            has_voice=True,
+            voice_energy=0.95,
+            speech_like_score=0.88,
+            sound_direction_deg=0,
+            sound_distance_m=0.8,
+            face_visible=True,
+            head_yaw_deg=0,
+            gaze_to_loona_score=0.9,
+            lip_movement_score=0.85,
+            is_attention_target=True,
+        )
+        for timestamp_ms in (0, 120)
+    ]
+    decision = engine.decide_utterance(frames)
+    assert decision.wakeup is False
+    assert "voice_burst_too_short" in decision.reject_reasons
 
 
 def test_background_audio_is_rejected() -> None:

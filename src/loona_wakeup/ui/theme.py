@@ -28,37 +28,6 @@ QLabel#StateWakeup {
     font-size: 34px;
     font-weight: 800;
 }
-QLabel#MetricName {
-    color: #8B949E;
-}
-QLabel#MetricValue {
-    color: #E6EDF3;
-    font-weight: 600;
-}
-QProgressBar {
-    background: #0B0D10;
-    border: 1px solid #242A33;
-    border-radius: 4px;
-    height: 8px;
-    text-align: center;
-}
-QProgressBar::chunk {
-    background: #2F81F7;
-    border-radius: 4px;
-}
-QListWidget {
-    background: #0B0D10;
-    border: 1px solid #242A33;
-    border-radius: 6px;
-    color: #E6EDF3;
-    padding: 6px;
-}
-QListWidget::item {
-    padding: 4px;
-}
-QListWidget::item:selected {
-    background: #1F6FEB;
-}
 QPushButton {
     background: #161B22;
     border: 1px solid #30363D;
