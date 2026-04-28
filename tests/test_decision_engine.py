@@ -156,6 +156,55 @@ def test_voice_without_lip_sync_is_rejected() -> None:
     assert "no_lip_voice_sync" in decision.reject_reasons
 
 
+def test_utterance_with_static_lips_is_rejected_even_when_voice_is_strong() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    frames = [
+        MultimodalFrame(
+            timestamp_ms=timestamp_ms,
+            user_id="user_01",
+            has_voice=True,
+            voice_energy=0.9,
+            speech_like_score=0.9,
+            sound_direction_deg=0,
+            sound_distance_m=0.8,
+            face_visible=True,
+            head_yaw_deg=0,
+            gaze_to_loona_score=0.9,
+            lip_movement_score=0.0,
+            is_attention_target=True,
+        )
+        for timestamp_ms in (0, 120, 240, 360)
+    ]
+    decision = engine.decide_utterance(frames)
+    assert decision.wakeup is False
+    assert "no_lip_voice_sync" in decision.reject_reasons
+
+
+def test_utterance_with_only_one_lip_motion_spike_is_rejected() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    lip_scores = [0.0, 0.0, 0.8, 0.0]
+    frames = [
+        MultimodalFrame(
+            timestamp_ms=index * 120,
+            user_id="user_01",
+            has_voice=True,
+            voice_energy=0.9,
+            speech_like_score=0.9,
+            sound_direction_deg=0,
+            sound_distance_m=0.8,
+            face_visible=True,
+            head_yaw_deg=0,
+            gaze_to_loona_score=0.9,
+            lip_movement_score=lip_score,
+            is_attention_target=True,
+        )
+        for index, lip_score in enumerate(lip_scores)
+    ]
+    decision = engine.decide_utterance(frames)
+    assert decision.wakeup is False
+    assert "no_lip_voice_sync" in decision.reject_reasons
+
+
 def test_head_angle_over_30_degrees_is_rejected_even_with_voice() -> None:
     engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
     decision = engine.decide_utterance(

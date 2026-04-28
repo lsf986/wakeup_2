@@ -125,6 +125,7 @@ class WakeupDecisionEngine:
             (frame.sound_distance_m for frame in source_frames if frame.sound_distance_m is not None),
             default=None,
         )
+        stable_lip_score = self._stable_lip_score(source_frames)
         return MultimodalFrame(
             timestamp_ms=frames[-1].timestamp_ms,
             user_id=best_visual.user_id or best_voice.user_id,
@@ -137,11 +138,27 @@ class WakeupDecisionEngine:
             head_yaw_deg=strongest_head_yaw if strongest_head_yaw is not None else best_visual.head_yaw_deg,
             head_pitch_deg=best_visual.head_pitch_deg,
             gaze_to_loona_score=max(frame.gaze_to_loona_score for frame in source_frames),
-            lip_movement_score=max(frame.lip_movement_score for frame in source_frames),
+            lip_movement_score=stable_lip_score,
             is_attention_target=any(frame.is_attention_target for frame in source_frames),
             scene_type="utterance_aggregate",
             background_audio_score=min(frame.background_audio_score for frame in source_frames),
         )
+
+    def _stable_lip_score(self, frames: list[MultimodalFrame]) -> float:
+        lip_scores = [_clamp(frame.lip_movement_score) for frame in frames]
+        if not lip_scores:
+            return 0.0
+        if len(lip_scores) <= 2:
+            return max(lip_scores)
+
+        active_count = sum(score >= self.wakeup_config.min_lip_score for score in lip_scores)
+        required_active_count = max(2, (len(lip_scores) + 3) // 4)
+        if active_count < required_active_count:
+            return min(max(lip_scores), self.wakeup_config.min_lip_score * 0.75)
+
+        top_count = max(1, len(lip_scores) // 3)
+        top_scores = sorted(lip_scores, reverse=True)[:top_count]
+        return sum(top_scores) / len(top_scores)
 
     def _score_frame(self, frame: MultimodalFrame) -> dict[str, float]:
         return {

@@ -653,11 +653,11 @@ class LocalCameraMicAdapter(QObject):
         self._draw_polyline(rgb, face_points, face_color, closed=True, dashed=True, node_step=4, node_radius=2)
         if not mouth_occluded:
             self._draw_polyline(rgb, outer_lip_points, mouth_color, closed=True, dashed=False, node_step=4, node_radius=1)
-            self._draw_polyline(rgb, inner_lip_points, mouth_color, closed=True, dashed=True, node_step=0, node_radius=1)
+            self._draw_polyline(rgb, inner_lip_points, mouth_color, closed=True, dashed=True, node_step=5, node_radius=1)
         if not eye_occlusion.get("left", False):
-            self._draw_polyline(rgb, left_eye_points, gaze_color, closed=True, dashed=False, node_step=3, node_radius=1)
+            self._draw_polyline(rgb, left_eye_points, gaze_color, closed=True, dashed=False, node_step=4, node_radius=1)
         if not eye_occlusion.get("right", False):
-            self._draw_polyline(rgb, right_eye_points, gaze_color, closed=True, dashed=False, node_step=3, node_radius=1)
+            self._draw_polyline(rgb, right_eye_points, gaze_color, closed=True, dashed=False, node_step=4, node_radius=1)
 
         cv2.putText(
             rgb,
@@ -788,13 +788,14 @@ class LocalCameraMicAdapter(QObject):
         if len(points) < 2:
             return
         draw_points = points + [points[0]] if closed else points
-        for start, end in zip(draw_points, draw_points[1:]):
+        for index, (start, end) in enumerate(zip(draw_points, draw_points[1:])):
             if dashed:
-                self._draw_dashed_line(rgb, start, end, color)
+                self._draw_dashed_line(rgb, start, end, color, dash=4.0, gap=5.0, phase=float(index % 2) * 1.5)
             else:
-                cv2.line(rgb, start, end, self._dim_color(color, 0.82), 1, lineType=cv2.LINE_AA)
+                cv2.line(rgb, start, end, self._dim_color(color, 0.52), 1, lineType=cv2.LINE_AA)
         if node_step > 0:
-            self._draw_hud_nodes(rgb, points[::node_step], color, radius=node_radius)
+            node_points = points[::node_step]
+            self._draw_hud_nodes(rgb, node_points, color, radius=node_radius)
 
     def _draw_dashed_line(
         self,
@@ -802,6 +803,10 @@ class LocalCameraMicAdapter(QObject):
         start: tuple[int, int],
         end: tuple[int, int],
         color: tuple[int, int, int],
+        *,
+        dash: float = 5.0,
+        gap: float = 4.0,
+        phase: float = 0.0,
     ) -> None:
         start_array = np.asarray(start, dtype=np.float32)
         end_array = np.asarray(end, dtype=np.float32)
@@ -810,9 +815,7 @@ class LocalCameraMicAdapter(QObject):
         if length < 2.0:
             return
         direction = vector / length
-        dash = 5.0
-        gap = 4.0
-        position = 0.0
+        position = phase
         while position < length:
             segment_start = start_array + direction * position
             segment_end = start_array + direction * min(position + dash, length)
@@ -820,7 +823,7 @@ class LocalCameraMicAdapter(QObject):
                 rgb,
                 tuple(segment_start.astype(int)),
                 tuple(segment_end.astype(int)),
-                self._dim_color(color, 0.8),
+                self._dim_color(color, 0.52),
                 1,
                 lineType=cv2.LINE_AA,
             )
@@ -835,7 +838,7 @@ class LocalCameraMicAdapter(QObject):
         radius: int,
     ) -> None:
         for point in points:
-            cv2.circle(rgb, point, radius, self._dim_color(color, 0.7), -1, lineType=cv2.LINE_AA)
+            cv2.circle(rgb, point, radius, self._dim_color(color, 0.62), -1, lineType=cv2.LINE_AA)
 
     def _draw_hud_ellipse(
         self,
