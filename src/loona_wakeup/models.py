@@ -19,6 +19,8 @@ class MultimodalFrame:
     voice_energy: float = 0.0
     speech_like_score: float = 0.0
     sound_direction_deg: float | None = None
+    face_direction_deg: float | None = None
+    sound_face_match_score: float = 1.0
     sound_distance_m: float | None = None
     face_visible: bool = False
     head_yaw_deg: float | None = None
@@ -31,6 +33,8 @@ class MultimodalFrame:
     multi_person_ambiguous: bool = False
     utterance_voice_ms: int = 0
     utterance_voice_frame_count: int = 0
+    intent_consistency_score: float = 1.0
+    target_stability_score: float = 1.0
     scene_type: str = "unknown"
     background_audio_score: float = 0.0
 
@@ -85,6 +89,9 @@ class WakeupConfig:
     min_utterance_ms: int = 220
     min_wakeup_voice_ms: int = 320
     min_wakeup_voice_frames: int = 3
+    min_intent_consistency_score: float = 0.45
+    min_target_stability_score: float = 0.75
+    min_sound_face_match_score: float = 0.45
     max_utterance_ms: int = 8000
     decision_window_ms: int = 1200
     cooldown_ms: int = 1500

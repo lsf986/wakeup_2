@@ -18,6 +18,9 @@ wakeup:
   min_utterance_ms: 220
   min_wakeup_voice_ms: 320
   min_wakeup_voice_frames: 3
+  min_intent_consistency_score: 0.45
+  min_target_stability_score: 0.75
+  min_sound_face_match_score: 0.45
   max_utterance_ms: 8000
   decision_window_ms: 1200
   cooldown_ms: 1500

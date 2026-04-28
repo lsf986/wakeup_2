@@ -43,6 +43,17 @@ def _head_pose_score(yaw_deg: float | None, face_visible: bool) -> float:
     return _clamp(1.0 - ((absolute - 12.0) / 43.0))
 
 
+def _sound_face_match_score(sound_direction_deg: float | None, face_direction_deg: float | None) -> float:
+    if sound_direction_deg is None or face_direction_deg is None:
+        return 1.0
+    gap = abs(sound_direction_deg - face_direction_deg)
+    if gap <= 8.0:
+        return 1.0
+    if gap >= 45.0:
+        return 0.0
+    return _clamp(1.0 - ((gap - 8.0) / 37.0))
+
+
 class WakeupDecisionEngine:
     def __init__(self, wakeup_config: WakeupConfig, weights: WeightConfig) -> None:
         self.wakeup_config = wakeup_config
@@ -131,6 +142,9 @@ class WakeupDecisionEngine:
         multi_person_count = max((frame.multi_person_count for frame in source_frames), default=0)
         multi_person_ambiguous = any(frame.multi_person_ambiguous for frame in source_frames) or len(target_track_ids) > 1
         stable_lip_score = self._stable_lip_score(source_frames)
+        intent_consistency_score = self._intent_consistency_score(source_frames)
+        target_stability_score = self._target_stability_score(source_frames, target_track_id)
+        sound_face_match_score = self._aggregate_sound_face_match_score(source_frames)
         return MultimodalFrame(
             timestamp_ms=frames[-1].timestamp_ms,
             user_id=best_visual.user_id or best_voice.user_id,
@@ -138,6 +152,8 @@ class WakeupDecisionEngine:
             voice_energy=max(frame.voice_energy for frame in source_frames),
             speech_like_score=max(frame.speech_like_score for frame in source_frames),
             sound_direction_deg=best_voice.sound_direction_deg,
+            face_direction_deg=best_visual.face_direction_deg,
+            sound_face_match_score=sound_face_match_score,
             sound_distance_m=best_distance,
             face_visible=any(frame.face_visible for frame in source_frames),
             head_yaw_deg=strongest_head_yaw if strongest_head_yaw is not None else best_visual.head_yaw_deg,
@@ -150,6 +166,8 @@ class WakeupDecisionEngine:
             multi_person_ambiguous=multi_person_ambiguous,
             utterance_voice_ms=voice_duration_ms,
             utterance_voice_frame_count=len(voice_frames),
+            intent_consistency_score=intent_consistency_score,
+            target_stability_score=target_stability_score,
             scene_type="utterance_aggregate",
             background_audio_score=min(frame.background_audio_score for frame in source_frames),
         )
@@ -158,6 +176,35 @@ class WakeupDecisionEngine:
         if len(voice_frames) < 2:
             return 0
         return max(0, voice_frames[-1].timestamp_ms - voice_frames[0].timestamp_ms)
+
+    def _intent_consistency_score(self, frames: list[MultimodalFrame]) -> float:
+        voice_frames = [frame for frame in frames if frame.has_voice or frame.speech_like_score >= self.wakeup_config.min_voice_score]
+        if not voice_frames:
+            return 0.0
+        scores = []
+        for frame in voice_frames:
+            head_score = _head_pose_score(frame.head_yaw_deg, frame.face_visible)
+            attention_score = 1.0 if frame.is_attention_target else 0.0
+            visual_attention = max(_clamp(frame.gaze_to_loona_score), attention_score, head_score)
+            lip_score = _clamp(frame.lip_movement_score)
+            scores.append((visual_attention * 0.65) + (lip_score * 0.35))
+        return sum(scores) / len(scores)
+
+    def _target_stability_score(self, frames: list[MultimodalFrame], target_track_id: str | None) -> float:
+        voice_frames = [frame for frame in frames if frame.has_voice or frame.speech_like_score >= self.wakeup_config.min_voice_score]
+        if not voice_frames or target_track_id is None:
+            return 1.0
+        stable_frames = sum(1 for frame in voice_frames if frame.target_track_id == target_track_id)
+        return stable_frames / len(voice_frames)
+
+    def _aggregate_sound_face_match_score(self, frames: list[MultimodalFrame]) -> float:
+        voice_frames = [frame for frame in frames if frame.has_voice or frame.speech_like_score >= self.wakeup_config.min_voice_score]
+        source_frames = voice_frames or frames
+        scores = [
+            min(_clamp(frame.sound_face_match_score), _sound_face_match_score(frame.sound_direction_deg, frame.face_direction_deg))
+            for frame in source_frames
+        ]
+        return sum(scores) / len(scores) if scores else 1.0
 
     def _stable_lip_score(self, frames: list[MultimodalFrame]) -> float:
         lip_scores = [_clamp(frame.lip_movement_score) for frame in frames]
@@ -179,10 +226,16 @@ class WakeupDecisionEngine:
         return {
             "voice_score": _clamp((frame.voice_energy * 0.35) + (frame.speech_like_score * 0.65)),
             "sound_position": _direction_score(frame.sound_direction_deg),
+            "sound_face_match_score": min(
+                _clamp(frame.sound_face_match_score),
+                _sound_face_match_score(frame.sound_direction_deg, frame.face_direction_deg),
+            ),
             "distance_score": _distance_score(frame.sound_distance_m, self.wakeup_config.max_distance_m),
             "head_pose_score": _head_pose_score(frame.head_yaw_deg, frame.face_visible),
             "gaze_score": _clamp(frame.gaze_to_loona_score),
             "lip_score": _clamp(frame.lip_movement_score),
+            "intent_consistency_score": _clamp(frame.intent_consistency_score),
+            "target_stability_score": _clamp(frame.target_stability_score),
             "attention_score": 1.0 if frame.is_attention_target else 0.0,
             "background_audio_score": _clamp(frame.background_audio_score),
         }
@@ -196,6 +249,12 @@ class WakeupDecisionEngine:
                 reasons.append("voice_burst_too_short")
             elif frame.utterance_voice_ms < self.wakeup_config.min_wakeup_voice_ms:
                 reasons.append("voice_burst_too_short")
+            if raw_scores["intent_consistency_score"] < self.wakeup_config.min_intent_consistency_score:
+                reasons.append("intent_not_consistent")
+            if frame.multi_person_count > 1 and raw_scores["target_stability_score"] < self.wakeup_config.min_target_stability_score:
+                reasons.append("target_not_stable")
+        if raw_scores["sound_face_match_score"] < self.wakeup_config.min_sound_face_match_score:
+            reasons.append("sound_face_mismatch")
         if frame.multi_person_ambiguous:
             reasons.append("multi_person_ambiguous")
         if self.wakeup_config.require_face_visible and not frame.face_visible:

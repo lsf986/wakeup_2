@@ -120,6 +120,132 @@ def test_short_cough_like_burst_is_rejected_even_with_lip_motion() -> None:
     assert "voice_burst_too_short" in decision.reject_reasons
 
 
+def test_sound_face_mismatch_is_rejected() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    frames = [
+        MultimodalFrame(
+            timestamp_ms=timestamp_ms,
+            user_id="user_01",
+            has_voice=True,
+            voice_energy=0.9,
+            speech_like_score=0.9,
+            sound_direction_deg=42,
+            face_direction_deg=0,
+            sound_distance_m=0.8,
+            face_visible=True,
+            head_yaw_deg=0,
+            gaze_to_loona_score=0.9,
+            lip_movement_score=0.8,
+            is_attention_target=True,
+        )
+        for timestamp_ms in (0, 160, 320)
+    ]
+    decision = engine.decide_utterance(frames)
+    assert decision.wakeup is False
+    assert "sound_face_mismatch" in decision.reject_reasons
+
+
+def test_single_frame_sound_face_mismatch_is_rejected() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    decision = engine.decide(
+        MultimodalFrame(
+            timestamp_ms=100,
+            has_voice=True,
+            voice_energy=0.9,
+            speech_like_score=0.9,
+            sound_direction_deg=-42,
+            face_direction_deg=0,
+            sound_distance_m=0.8,
+            face_visible=True,
+            head_yaw_deg=0,
+            gaze_to_loona_score=0.9,
+            lip_movement_score=0.8,
+            is_attention_target=True,
+        )
+    )
+    assert decision.wakeup is False
+    assert "sound_face_mismatch" in decision.reject_reasons
+
+
+def test_inconsistent_intent_during_voice_is_rejected() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    frames = [
+        MultimodalFrame(
+            timestamp_ms=timestamp_ms,
+            user_id="user_01",
+            has_voice=True,
+            voice_energy=0.9,
+            speech_like_score=0.9,
+            sound_direction_deg=0,
+            face_direction_deg=0,
+            sound_distance_m=0.8,
+            face_visible=True,
+            head_yaw_deg=None,
+            gaze_to_loona_score=0.05,
+            lip_movement_score=0.8 if timestamp_ms in {160, 320} else 0.05,
+            is_attention_target=False,
+        )
+        for timestamp_ms in (0, 160, 320, 480)
+    ]
+    decision = engine.decide_utterance(frames)
+    assert decision.wakeup is False
+    assert "intent_not_consistent" in decision.reject_reasons
+
+
+def test_unstable_multi_person_target_is_rejected() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    frames = [
+        MultimodalFrame(
+            timestamp_ms=timestamp_ms,
+            user_id=track_id,
+            has_voice=True,
+            voice_energy=0.9,
+            speech_like_score=0.9,
+            sound_direction_deg=0,
+            face_direction_deg=0,
+            sound_distance_m=0.8,
+            face_visible=True,
+            head_yaw_deg=0,
+            gaze_to_loona_score=0.9,
+            lip_movement_score=0.8,
+            is_attention_target=True,
+            target_track_id=track_id,
+            multi_person_count=2,
+        )
+        for timestamp_ms, track_id in ((0, "local_user_0"), (160, "local_user_0"), (320, "local_user_1"))
+    ]
+    decision = engine.decide_utterance(frames)
+    assert decision.wakeup is False
+    assert "multi_person_ambiguous" in decision.reject_reasons
+
+
+def test_missing_target_frames_in_multi_person_utterance_are_rejected() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    frames = [
+        MultimodalFrame(
+            timestamp_ms=timestamp_ms,
+            user_id="local_user_0",
+            has_voice=True,
+            voice_energy=0.9,
+            speech_like_score=0.9,
+            sound_direction_deg=0,
+            face_direction_deg=0,
+            sound_distance_m=0.8,
+            face_visible=True,
+            head_yaw_deg=0,
+            gaze_to_loona_score=0.9,
+            lip_movement_score=0.8,
+            is_attention_target=True,
+            target_track_id=track_id,
+            multi_person_count=2,
+        )
+        for timestamp_ms, track_id in ((0, "local_user_0"), (160, None), (320, "local_user_0"))
+    ]
+    decision = engine.decide_utterance(frames)
+    assert decision.wakeup is False
+    assert "target_not_stable" in decision.reject_reasons
+
+
 def test_background_audio_is_rejected() -> None:
     engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
     decision = engine.decide(

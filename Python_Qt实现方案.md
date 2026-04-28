@@ -105,6 +105,8 @@ Qt MainWindow
 - 基于 FaceMesh 关键点绘制真实人脸、眼睛和嘴唇轮廓。
 - 基于嘴唇关键点开合和变化估计唇动。
 - 基于人脸中心和眼部关键点估计注视 Loona 的程度。
+- 基于人脸位置维护稳定 `track_id`，避免多人顺序变化导致候选人跳变。
+- 输出人脸方向和声源方向匹配分，用于过滤画面内外错配。
 - FaceMesh 失败时，回退到 OpenCV Haar 人脸/眼睛检测。
 - Haar 回退路径中，未检测到眼睛时使用正脸程度作为注视估计兜底。
 - `sounddevice.InputStream` 计算麦克风 RMS 能量。
@@ -149,7 +151,7 @@ Qt MainWindow
 }
 ```
 
-也支持常见别名字段，例如 `target_user_id`、`voice`、`vad`、`direction_deg`、`distance_m`、`head_yaw`、`gaze_score`、`lip_score`、`attention_target`、`background_score`。
+也支持常见别名字段，例如 `target_user_id`、`voice`、`vad`、`direction_deg`、`visual_direction_deg`、`sound_face_match`、`distance_m`、`head_yaw`、`gaze_score`、`lip_score`、`attention_target`、`background_score`。
 
 ### 4.3 mock 模式
 
@@ -232,6 +234,9 @@ wakeup:
   min_utterance_ms: 220
   min_wakeup_voice_ms: 320
   min_wakeup_voice_frames: 3
+  min_intent_consistency_score: 0.45
+  min_target_stability_score: 0.75
+  min_sound_face_match_score: 0.45
   max_utterance_ms: 8000
 ```
 
@@ -240,6 +245,9 @@ wakeup:
 - `utterance_end_silence_ms` 越小，响应越快，但句中停顿更容易被当成结束。
 - `utterance_end_silence_ms` 越大，判断更稳，但唤醒反馈会更慢。
 - `min_wakeup_voice_ms` 和 `min_wakeup_voice_frames` 用于过滤咳嗽等短促非语音爆发声。
+- `min_intent_consistency_score` 要求说话期间朝向、注视、唇动等意图信号持续一致。
+- `min_target_stability_score` 要求多人场景中主候选人在一句话内保持稳定。
+- `min_sound_face_match_score` 要求声源方向和人脸方向不要明显错配。
 
 ## 7. 唤醒融合判断
 
@@ -262,6 +270,9 @@ wakeup:
 
 - `no_reliable_voice`：没有可靠人声。
 - `voice_burst_too_short`：有效语音帧数或持续时间过短，按咳嗽/短促声处理。
+- `intent_not_consistent`：说话期间意图信号不连续。
+- `target_not_stable`：多人场景中主候选目标不稳定。
+- `sound_face_mismatch`：声源方向和人脸方向明显不一致。
 - `face_not_visible`：配置要求人脸可见但当前不可见。
 - `distance_too_far`：距离超过最大交互距离。
 - `background_audio_without_lip_sync`：背景音明显且无唇动同步。

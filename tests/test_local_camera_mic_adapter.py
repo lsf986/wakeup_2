@@ -1,3 +1,4 @@
+from collections import deque
 from types import SimpleNamespace
 
 import numpy as np
@@ -85,6 +86,15 @@ def test_speech_score_rejects_loud_breath_noise() -> None:
     adapter._audio_energy = float(np.sqrt(np.mean(np.square(breath_noise))))
     adapter._audio_speech_quality = adapter._speech_quality_score(breath_noise, 16000)
     assert adapter._speech_score() < 0.45
+
+
+def test_speech_quality_reduces_impulsive_cough_like_noise() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig(audio_sample_rate=16000))
+    rng = np.random.default_rng(19)
+    samples = rng.normal(0.0, 0.006, 1024).astype(np.float32)
+    samples[120:150] += np.hanning(30).astype(np.float32) * 0.18
+    samples[410:430] -= np.hanning(20).astype(np.float32) * 0.14
+    assert adapter._speech_quality_score(samples, 16000) < 0.45
 
 
 def test_gaze_score_falls_back_to_centered_face_when_eyes_are_hidden() -> None:
@@ -298,6 +308,41 @@ def test_multi_person_candidate_selection_allows_lip_dominance_with_close_scores
     selected, ambiguous = adapter._select_face_mesh_candidate(candidates)
     assert selected is candidates[0]
     assert ambiguous is False
+
+
+def test_track_id_stays_stable_when_face_order_changes() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig())
+    adapter._frame_index = 1
+    used_first: set[str] = set()
+    left_id = adapter._assign_track_id((20, 30, 80, 100), used_first)
+    right_id = adapter._assign_track_id((220, 32, 82, 100), used_first)
+
+    adapter._frame_index = 2
+    used_second: set[str] = set()
+    right_id_again = adapter._assign_track_id((224, 34, 82, 100), used_second)
+    left_id_again = adapter._assign_track_id((22, 31, 80, 100), used_second)
+
+    assert right_id_again == right_id
+    assert left_id_again == left_id
+
+
+def test_stale_track_cleanup_removes_histories() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig())
+    adapter._frame_index = 1
+    track_id = adapter._assign_track_id((20, 30, 80, 100), set())
+    adapter._prev_lip_open_ratios[track_id] = 0.1
+    adapter._mouth_motion_histories.setdefault(track_id, deque(maxlen=5)).append(0.2)
+    adapter._gaze_histories.setdefault(track_id, deque(maxlen=4)).append(0.7)
+    adapter._gaze_states[track_id] = True
+
+    adapter._frame_index = 20
+    adapter._drop_stale_tracks(set())
+
+    assert track_id not in adapter._tracks
+    assert track_id not in adapter._prev_lip_open_ratios
+    assert track_id not in adapter._mouth_motion_histories
+    assert track_id not in adapter._gaze_histories
+    assert track_id not in adapter._gaze_states
 
 
 def test_candidate_score_requires_lip_motion() -> None:

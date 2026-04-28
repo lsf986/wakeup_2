@@ -10,6 +10,8 @@ def test_frame_from_payload_supports_alias_fields() -> None:
             "voice_energy": "0.8",
             "speech_like_score": 0.9,
             "direction_deg": -5,
+            "visual_direction_deg": -3,
+            "sound_face_match": "0.8",
             "distance_m": 0.8,
             "face_visible": True,
             "head_yaw": 3,
@@ -26,6 +28,8 @@ def test_frame_from_payload_supports_alias_fields() -> None:
     assert frame.user_id == "user_01"
     assert frame.has_voice is True
     assert frame.sound_direction_deg == -5
+    assert frame.face_direction_deg == -3
+    assert frame.sound_face_match_score == 0.8
     assert frame.sound_distance_m == 0.8
     assert frame.gaze_to_loona_score == 0.7
     assert frame.lip_movement_score == 0.6

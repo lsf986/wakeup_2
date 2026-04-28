@@ -76,6 +76,8 @@ MULTI_PERSON_SELECTION_MARGIN = 0.08
 MULTI_PERSON_LIP_DOMINANCE_MARGIN = 0.012
 GAZE_ENTER_THRESHOLD = 0.55
 GAZE_EXIT_THRESHOLD = 0.48
+TRACK_MATCH_DISTANCE_RATIO = 0.38
+TRACK_MAX_STALE_FRAMES = 8
 
 
 def _clamp_local(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -134,6 +136,9 @@ class LocalCameraMicAdapter(QObject):
         self._mouth_motion_histories: dict[str, deque[float]] = {}
         self._gaze_histories: dict[str, deque[float]] = {}
         self._gaze_states: dict[str, bool] = {}
+        self._tracks: dict[str, dict[str, Any]] = {}
+        self._next_track_index = 0
+        self._frame_index = 0
         self._last_mesh_timestamp_ms = 0
         self._timer = QTimer(self)
         self._timer.setInterval(config.frame_interval_ms)
@@ -221,6 +226,7 @@ class LocalCameraMicAdapter(QObject):
         if not ok:
             self._emit_empty_frame()
             return
+        self._frame_index += 1
 
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
@@ -276,6 +282,8 @@ class LocalCameraMicAdapter(QObject):
             voice_energy=min(1.0, self._audio_energy / max(self._config.min_audio_energy * 4.0, 1e-6)),
             speech_like_score=speech_like,
             sound_direction_deg=direction_deg,
+            face_direction_deg=direction_deg,
+            sound_face_match_score=1.0,
             sound_distance_m=distance_m,
             face_visible=face_visible,
             head_yaw_deg=head_yaw_deg,
@@ -326,11 +334,38 @@ class LocalCameraMicAdapter(QObject):
         frequencies = np.fft.rfftfreq(centered.size, d=1.0 / float(sample_rate))
         centroid = float(np.sum(frequencies * spectrum) / np.sum(spectrum)) if np.sum(spectrum) > 0 else 0.0
         centroid_ratio = centroid / max(sample_rate / 2.0, 1.0)
+        periodicity_score = self._periodicity_score(centered, sample_rate)
+        peak_ratio = float(np.max(np.abs(centered)) / max(energy, 1e-6))
+        impulse_penalty = _clamp_local((peak_ratio - 5.0) / 7.0)
 
         tonal_score = 1.0 - _clamp_local((spectral_flatness - 0.35) / 0.35)
         voicing_score = 1.0 - _clamp_local((zero_crossing_rate - 0.16) / 0.16)
         low_band_score = 1.0 - _clamp_local((centroid_ratio - 0.45) / 0.30)
-        return _clamp_local(0.15 + (0.45 * tonal_score) + (0.25 * voicing_score) + (0.15 * low_band_score))
+        return _clamp_local(
+            0.10
+            + (0.30 * tonal_score)
+            + (0.18 * voicing_score)
+            + (0.14 * low_band_score)
+            + (0.32 * periodicity_score)
+            - (0.18 * impulse_penalty)
+        )
+
+    def _periodicity_score(self, samples: np.ndarray, sample_rate: int) -> float:
+        if samples.size < 64:
+            return 0.0
+        normalized = samples / max(float(np.sqrt(np.mean(np.square(samples)))), 1e-6)
+        min_lag = max(1, int(sample_rate / 350.0))
+        max_lag = min(normalized.size - 1, int(sample_rate / 70.0))
+        if max_lag <= min_lag:
+            return 0.0
+        correlations = []
+        for lag in range(min_lag, max_lag + 1):
+            current = normalized[:-lag]
+            shifted = normalized[lag:]
+            denominator = max(float(np.linalg.norm(current) * np.linalg.norm(shifted)), 1e-6)
+            correlations.append(float(np.dot(current, shifted) / denominator))
+        best = max(correlations, default=0.0)
+        return _clamp_local((best - 0.18) / 0.42)
 
     def _detect_face_mesh(self, rgb: np.ndarray) -> dict[str, Any] | None:
         if self._face_mesh is None or mp is None:
@@ -346,11 +381,13 @@ class LocalCameraMicAdapter(QObject):
             self._mouth_motion_histories.clear()
             self._gaze_histories.clear()
             self._gaze_states.clear()
+            self._tracks.clear()
             return None
 
         height, width = rgb.shape[:2]
+        used_track_ids: set[str] = set()
         candidates = [
-            self._build_face_mesh_candidate(result, face_index, rgb, hand_result, width, height)
+            self._build_face_mesh_candidate(result, face_index, rgb, hand_result, width, height, used_track_ids)
             for face_index in range(len(result.face_landmarks))
         ]
         candidates = [candidate for candidate in candidates if candidate is not None]
@@ -366,6 +403,7 @@ class LocalCameraMicAdapter(QObject):
         selected["candidates"] = candidates
         selected["multi_person_count"] = len(candidates)
         selected["multi_person_ambiguous"] = ambiguous
+        self._drop_stale_tracks(used_track_ids)
         return selected
 
     def _build_face_mesh_candidate(
@@ -376,6 +414,7 @@ class LocalCameraMicAdapter(QObject):
         hand_result: Any | None,
         width: int,
         height: int,
+        used_track_ids: set[str],
     ) -> dict[str, Any] | None:
         landmarks = result.face_landmarks[face_index]
         points = self._landmark_points(landmarks, width, height, range(len(landmarks)))
@@ -387,7 +426,7 @@ class LocalCameraMicAdapter(QObject):
         matrix_yaw_deg = self._face_matrix_yaw_deg(result, face_index=face_index)
         head_yaw_deg = matrix_yaw_deg if matrix_yaw_deg is not None else float(normalized_offset * 35.0)
         side_profile = self._is_side_profile(landmarks, width, height, head_yaw_deg)
-        candidate_id = f"local_user_{face_index}"
+        candidate_id = self._assign_track_id(face, used_track_ids)
 
         eye_occlusion = self._eye_occlusion_state(landmarks, rgb, hand_result, width, height)
         mouth_occluded = self._mouth_is_occluded(landmarks, rgb, hand_result, width, height)
@@ -419,6 +458,8 @@ class LocalCameraMicAdapter(QObject):
             "frame_width": width,
             "frame_height": height,
             "direction_deg": direction_deg,
+            "face_direction_deg": direction_deg,
+            "sound_face_match_score": 1.0,
             "head_yaw_deg": head_yaw_deg,
             "gaze_score": gaze_score,
             "gaze_active": gaze_active,
@@ -441,6 +482,50 @@ class LocalCameraMicAdapter(QObject):
         if len(ranked) >= 2 and ranked[0]["candidate_score"] - ranked[1]["candidate_score"] < MULTI_PERSON_SELECTION_MARGIN:
             return None, True
         return ranked[0], False
+
+    def _assign_track_id(self, face: tuple[int, int, int, int], used_track_ids: set[str] | None = None) -> str:
+        used_track_ids = used_track_ids if used_track_ids is not None else set()
+        center = self._bbox_center(face)
+        face_scale = max(float(face[2]), float(face[3]), 1.0)
+        best_track_id: str | None = None
+        best_distance = float("inf")
+        for track_id, track in self._tracks.items():
+            if track_id in used_track_ids:
+                continue
+            distance = float(np.linalg.norm(np.asarray(center) - np.asarray(track["center"])))
+            threshold = max(face_scale, float(track.get("scale", face_scale))) * TRACK_MATCH_DISTANCE_RATIO
+            if distance <= threshold and distance < best_distance:
+                best_track_id = track_id
+                best_distance = distance
+
+        if best_track_id is None:
+            best_track_id = f"local_user_{self._next_track_index}"
+            self._next_track_index += 1
+
+        self._tracks[best_track_id] = {
+            "center": center,
+            "scale": face_scale,
+            "last_seen": self._frame_index,
+        }
+        used_track_ids.add(best_track_id)
+        return best_track_id
+
+    def _drop_stale_tracks(self, active_track_ids: set[str]) -> None:
+        stale_ids = [
+            track_id
+            for track_id, track in self._tracks.items()
+            if track_id not in active_track_ids and self._frame_index - int(track.get("last_seen", self._frame_index)) > TRACK_MAX_STALE_FRAMES
+        ]
+        for track_id in stale_ids:
+            self._tracks.pop(track_id, None)
+            self._prev_lip_open_ratios.pop(track_id, None)
+            self._mouth_motion_histories.pop(track_id, None)
+            self._gaze_histories.pop(track_id, None)
+            self._gaze_states.pop(track_id, None)
+
+    def _bbox_center(self, bbox: tuple[int, int, int, int]) -> tuple[float, float]:
+        left, top, width, height = bbox
+        return (left + (width / 2.0), top + (height / 2.0))
 
     def _candidate_score(
         self,
@@ -805,6 +890,7 @@ class LocalCameraMicAdapter(QObject):
             self._mouth_motion_histories.clear()
             self._gaze_histories.clear()
             self._gaze_states.clear()
+            self._tracks.clear()
             return None
         return tuple(max(faces, key=lambda item: item[2] * item[3]))
 

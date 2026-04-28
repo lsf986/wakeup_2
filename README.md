@@ -8,8 +8,9 @@
 - 本地摄像头实时预览面板。
 - IDLE / WAKEUP 状态显示框实时刷新。
 - MediaPipe FaceMesh 人脸、嘴唇、眼睛关键点检测。
-- 多人同框候选人选择，避免把 A 的注视和 B 的声音拼成误唤醒。
-- 本地麦克风人声能量与语音质量检测，降低吹气、气流声、短促咳嗽等非语音误触发。
+- 多人同框稳定候选人跟踪，避免把 A 的注视和 B 的声音拼成误唤醒。
+- 本地麦克风人声能量、周期性和语音质量检测，降低吹气、气流声、短促咳嗽等非语音误触发。
+- 句内意图一致性、目标稳定性、声源方向和人脸方向匹配判断。
 - Mock 多模态数据流。
 - Live UDP 多模态数据接入。
 - 规则加权版 WakeupDecisionEngine。
@@ -41,7 +42,7 @@ PYTHONPATH=src python -m loona_wakeup.main
 
 FaceMesh 会绘制更贴合真实轮廓的人脸、嘴唇和眼睛线条；满足当前识别条件时显示绿色，不满足时显示红色。
 
-多人同时出现在画面中时，本地模式最多检测 3 张脸，并为每个人独立计算朝向、注视、嘴唇运动、遮挡和距离。系统只选择一个主说话候选人进入唤醒判断；非主候选人只显示低亮轮廓。如果候选人分数太接近，或一句话期间主候选人发生切换，会判定为 `multi_person_ambiguous` 并拒绝唤醒。
+多人同时出现在画面中时，本地模式最多检测 3 张脸，并通过人脸位置给每个人分配稳定 `track_id`，独立计算朝向、注视、嘴唇运动、遮挡和距离。系统只选择一个主说话候选人进入唤醒判断；非主候选人只显示低亮轮廓。如果候选人分数太接近，或一句话期间主候选人发生切换，会判定为 `multi_person_ambiguous` 并拒绝唤醒。
 
 多人场景不会跨人合并信号：A 在注视 Loona、B 在旁边说话时，不会把 A 的视觉意图和 B 的声音拼成一次唤醒。
 
@@ -104,7 +105,7 @@ runtime:
 }
 ```
 
-也支持常见别名字段：`target_user_id`、`voice`、`vad`、`direction_deg`、`distance_m`、`head_yaw`、`gaze_score`、`lip_score`、`attention_target`、`background_score`。
+也支持常见别名字段：`target_user_id`、`voice`、`vad`、`direction_deg`、`visual_direction_deg`、`sound_face_match`、`distance_m`、`head_yaw`、`gaze_score`、`lip_score`、`attention_target`、`background_score`。
 
 默认策略偏保守：需要可靠人声、可见人脸和唇动同步，才允许触发唤醒。若底层暂时无法稳定输出 `face_visible` 或 `lip_movement_score`，可以在 [configs/default.yaml](configs/default.yaml) 中临时关闭：
 
@@ -123,9 +124,12 @@ wakeup:
 	min_consecutive_wakeup_frames: 3
 	min_wakeup_voice_ms: 320
 	min_wakeup_voice_frames: 3
+	min_intent_consistency_score: 0.45
+	min_target_stability_score: 0.75
+	min_sound_face_match_score: 0.45
 ```
 
-这可以过滤底层人声、唇动或视线的单帧抖动，也会拒绝咳嗽这类过短的非语音爆发声。
+这可以过滤底层人声、唇动或视线的单帧抖动，也会拒绝咳嗽这类过短的非语音爆发声、句内意图不连续、多人目标不稳定以及声源方向和人脸方向明显不一致的情况。
 
 可用测试脚本模拟底层输出：
 
