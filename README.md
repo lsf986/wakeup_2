@@ -8,7 +8,8 @@
 - 本地摄像头实时预览面板。
 - IDLE / WAKEUP 状态显示框实时刷新。
 - MediaPipe FaceMesh 人脸、嘴唇、眼睛关键点检测。
-- 本地麦克风人声能量检测。
+- 多人同框候选人选择，避免把 A 的注视和 B 的声音拼成误唤醒。
+- 本地麦克风人声能量与语音质量检测，降低吹气、气流声等非语音误触发。
 - Mock 多模态数据流。
 - Live UDP 多模态数据接入。
 - 规则加权版 WakeupDecisionEngine。
@@ -39,6 +40,10 @@ PYTHONPATH=src python -m loona_wakeup.main
 当前摄像头面板用于实时预览系统默认摄像头。默认使用 `local` 模式，优先通过 MediaPipe FaceMesh 检测人脸、嘴唇和眼睛关键点，OpenCV Haar 作为兜底；同时从本机麦克风检测人声能量，用这些本地结果驱动唤醒判断。
 
 FaceMesh 会绘制更贴合真实轮廓的人脸、嘴唇和眼睛线条；满足当前识别条件时显示绿色，不满足时显示红色。
+
+多人同时出现在画面中时，本地模式最多检测 3 张脸，并为每个人独立计算朝向、注视、嘴唇运动、遮挡和距离。系统只选择一个主说话候选人进入唤醒判断；非主候选人只显示低亮轮廓。如果候选人分数太接近，或一句话期间主候选人发生切换，会判定为 `multi_person_ambiguous` 并拒绝唤醒。
+
+多人场景不会跨人合并信号：A 在注视 Loona、B 在旁边说话时，不会把 A 的视觉意图和 B 的声音拼成一次唤醒。
 
 MediaPipe 模型文件位于 [assets/models/face_landmarker.task](assets/models/face_landmarker.task)。如果该文件缺失，程序会自动回退到 OpenCV Haar 检测，但识别率会明显下降。
 

@@ -125,6 +125,10 @@ class WakeupDecisionEngine:
             (frame.sound_distance_m for frame in source_frames if frame.sound_distance_m is not None),
             default=None,
         )
+        target_track_ids = {frame.target_track_id for frame in source_frames if frame.target_track_id}
+        target_track_id = next(iter(target_track_ids)) if len(target_track_ids) == 1 else None
+        multi_person_count = max((frame.multi_person_count for frame in source_frames), default=0)
+        multi_person_ambiguous = any(frame.multi_person_ambiguous for frame in source_frames) or len(target_track_ids) > 1
         stable_lip_score = self._stable_lip_score(source_frames)
         return MultimodalFrame(
             timestamp_ms=frames[-1].timestamp_ms,
@@ -140,6 +144,9 @@ class WakeupDecisionEngine:
             gaze_to_loona_score=max(frame.gaze_to_loona_score for frame in source_frames),
             lip_movement_score=stable_lip_score,
             is_attention_target=any(frame.is_attention_target for frame in source_frames),
+            target_track_id=target_track_id,
+            multi_person_count=multi_person_count,
+            multi_person_ambiguous=multi_person_ambiguous,
             scene_type="utterance_aggregate",
             background_audio_score=min(frame.background_audio_score for frame in source_frames),
         )
@@ -176,6 +183,8 @@ class WakeupDecisionEngine:
         reasons: list[str] = []
         if not frame.has_voice or raw_scores["voice_score"] < self.wakeup_config.min_voice_score:
             reasons.append("no_reliable_voice")
+        if frame.multi_person_ambiguous:
+            reasons.append("multi_person_ambiguous")
         if self.wakeup_config.require_face_visible and not frame.face_visible:
             reasons.append("face_not_visible")
         if frame.head_yaw_deg is not None and abs(frame.head_yaw_deg) > self.wakeup_config.max_head_yaw_deg:

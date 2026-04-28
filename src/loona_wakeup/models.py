@@ -27,6 +27,9 @@ class MultimodalFrame:
     gaze_to_loona_score: float = 0.0
     lip_movement_score: float = 0.0
     is_attention_target: bool = False
+    target_track_id: str | None = None
+    multi_person_count: int = 0
+    multi_person_ambiguous: bool = False
     scene_type: str = "unknown"
     background_audio_score: float = 0.0
 

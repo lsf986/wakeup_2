@@ -62,6 +62,31 @@ def test_speech_score_stays_low_near_noise_floor() -> None:
     assert adapter._speech_score() == 0.0
 
 
+def test_speech_quality_keeps_voiced_audio_high() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig(audio_sample_rate=16000))
+    sample_rate = 16000
+    t = np.arange(1024, dtype=np.float32) / sample_rate
+    voiced = (0.025 * np.sin(2 * np.pi * 180 * t)) + (0.010 * np.sin(2 * np.pi * 360 * t))
+    assert adapter._speech_quality_score(voiced.astype(np.float32), sample_rate) > 0.75
+
+
+def test_speech_quality_reduces_breath_noise() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig(audio_sample_rate=16000))
+    rng = np.random.default_rng(7)
+    breath_noise = rng.normal(0.0, 0.025, 1024).astype(np.float32)
+    assert adapter._speech_quality_score(breath_noise, 16000) < 0.45
+
+
+def test_speech_score_rejects_loud_breath_noise() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig(min_audio_energy=0.01, audio_sample_rate=16000))
+    rng = np.random.default_rng(11)
+    breath_noise = rng.normal(0.0, 0.03, 1024).astype(np.float32)
+    adapter._noise_floor = 0.001
+    adapter._audio_energy = float(np.sqrt(np.mean(np.square(breath_noise))))
+    adapter._audio_speech_quality = adapter._speech_quality_score(breath_noise, 16000)
+    assert adapter._speech_score() < 0.45
+
+
 def test_gaze_score_falls_back_to_centered_face_when_eyes_are_hidden() -> None:
     adapter = LocalCameraMicAdapter(LocalInputConfig())
     assert adapter._estimate_gaze_score(0.95, []) > 0.7
@@ -242,6 +267,54 @@ def test_mouth_visual_evidence_is_high_when_lip_edges_are_visible() -> None:
     assert adapter._mouth_visual_evidence_score(rgb, mouth_points) >= MOUTH_OCCLUSION_EVIDENCE_THRESHOLD
 
 
+def test_multi_person_candidate_selection_prefers_clear_lip_motion() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig())
+    candidates = [
+        {"candidate_id": "local_user_0", "candidate_score": 0.30, "lip_motion": 0.01},
+        {"candidate_id": "local_user_1", "candidate_score": 0.58, "lip_motion": 0.05},
+    ]
+    selected, ambiguous = adapter._select_face_mesh_candidate(candidates)
+    assert selected is candidates[1]
+    assert ambiguous is False
+
+
+def test_multi_person_candidate_selection_rejects_close_scores() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig())
+    candidates = [
+        {"candidate_id": "local_user_0", "candidate_score": 0.52, "lip_motion": 0.04},
+        {"candidate_id": "local_user_1", "candidate_score": 0.47, "lip_motion": 0.035},
+    ]
+    selected, ambiguous = adapter._select_face_mesh_candidate(candidates)
+    assert selected is None
+    assert ambiguous is True
+
+
+def test_multi_person_candidate_selection_allows_lip_dominance_with_close_scores() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig(min_mouth_motion=0.008))
+    candidates = [
+        {"candidate_id": "local_user_0", "candidate_score": 0.52, "lip_motion": 0.018},
+        {"candidate_id": "local_user_1", "candidate_score": 0.48, "lip_motion": 0.004},
+    ]
+    selected, ambiguous = adapter._select_face_mesh_candidate(candidates)
+    assert selected is candidates[0]
+    assert ambiguous is False
+
+
+def test_candidate_score_requires_lip_motion() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig(min_mouth_motion=0.008))
+    assert (
+        adapter._candidate_score(
+            lip_motion=0.0,
+            gaze_score=1.0,
+            head_yaw_deg=0.0,
+            direction_deg=0.0,
+            distance_m=0.8,
+            mouth_occluded=False,
+        )
+        == 0.0
+    )
+
+
 def test_mesh_gaze_score_is_high_when_irises_are_centered() -> None:
     adapter = LocalCameraMicAdapter(LocalInputConfig())
     landmarks = _landmarks()
@@ -357,6 +430,34 @@ def test_lip_and_gaze_overlay_conditions_are_independent() -> None:
     assert adapter._lip_is_moving(0.03) is True
     assert adapter._eyes_are_gazing(0.54) is False
     assert adapter._eyes_are_gazing(0.55) is True
+
+
+def test_stable_gaze_state_uses_hysteresis_near_threshold() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig())
+    candidate_id = "local_user_0"
+    assert adapter._stable_gaze_state(candidate_id, 0.56) is True
+    assert adapter._stable_gaze_state(candidate_id, 0.53) is True
+    assert adapter._stable_gaze_state(candidate_id, 0.49) is True
+    assert adapter._stable_gaze_state(candidate_id, 0.47) is False
+
+
+def test_stabilized_gaze_score_smooths_small_jitter() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig())
+    candidate_id = "local_user_0"
+    scores = [
+        adapter._stabilized_gaze_score(candidate_id, score, {"left": False, "right": False})
+        for score in (0.58, 0.52, 0.57, 0.53)
+    ]
+    assert min(scores[1:]) > 0.54
+
+
+def test_stabilized_gaze_score_clears_when_both_eyes_occluded() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig())
+    candidate_id = "local_user_0"
+    adapter._stabilized_gaze_score(candidate_id, 0.70, {"left": False, "right": False})
+    adapter._stable_gaze_state(candidate_id, 0.70)
+    assert adapter._stabilized_gaze_score(candidate_id, 0.70, {"left": True, "right": True}) == 0.0
+    assert adapter._gaze_states.get(candidate_id) is None
 
 
 def test_head_angle_condition_turns_invalid_over_30_degrees() -> None:

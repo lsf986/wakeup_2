@@ -68,9 +68,50 @@ INNER_LIP_POINTS = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 415, 310, 
 HUD_GREEN = (78, 255, 166)
 HUD_RED = (255, 82, 104)
 HUD_TEXT = (230, 237, 243)
+HUD_DIM = (96, 110, 124)
 MAX_HEAD_YAW_DEG = 30.0
 EYE_OCCLUSION_EVIDENCE_THRESHOLD = 0.06
 MOUTH_OCCLUSION_EVIDENCE_THRESHOLD = 0.05
+MULTI_PERSON_SELECTION_MARGIN = 0.08
+MULTI_PERSON_LIP_DOMINANCE_MARGIN = 0.012
+GAZE_ENTER_THRESHOLD = 0.55
+GAZE_EXIT_THRESHOLD = 0.48
+
+
+def _clamp_local(value: float, low: float = 0.0, high: float = 1.0) -> float:
+    return max(low, min(high, value))
+
+
+def _direction_score_local(direction_deg: float | None) -> float:
+    if direction_deg is None:
+        return 0.0
+    absolute = abs(direction_deg)
+    if absolute <= 10.0:
+        return 1.0
+    if absolute >= 45.0:
+        return 0.0
+    return _clamp_local(1.0 - ((absolute - 10.0) / 35.0))
+
+
+def _head_facing_score_local(head_yaw_deg: float | None) -> float:
+    if head_yaw_deg is None:
+        return 0.0
+    absolute = abs(head_yaw_deg)
+    if absolute <= 10.0:
+        return 1.0
+    if absolute >= MAX_HEAD_YAW_DEG:
+        return 0.0
+    return _clamp_local(1.0 - ((absolute - 10.0) / (MAX_HEAD_YAW_DEG - 10.0)))
+
+
+def _distance_score_local(distance_m: float | None) -> float:
+    if distance_m is None:
+        return 0.0
+    if distance_m <= 0.7:
+        return 1.0
+    if distance_m >= 2.2:
+        return 0.0
+    return _clamp_local(1.0 - ((distance_m - 0.7) / 1.5))
 
 
 class LocalCameraMicAdapter(QObject):
@@ -84,10 +125,15 @@ class LocalCameraMicAdapter(QObject):
         self._capture: cv2.VideoCapture | None = None
         self._audio_stream: sd.InputStream | None = None
         self._audio_energy = 0.0
+        self._audio_speech_quality = 1.0
         self._noise_floor = 0.01
         self._prev_mouth_gray: np.ndarray | None = None
         self._prev_lip_open_ratio: float | None = None
+        self._prev_lip_open_ratios: dict[str, float] = {}
         self._mouth_motion_history: deque[float] = deque(maxlen=5)
+        self._mouth_motion_histories: dict[str, deque[float]] = {}
+        self._gaze_histories: dict[str, deque[float]] = {}
+        self._gaze_states: dict[str, bool] = {}
         self._last_mesh_timestamp_ms = 0
         self._timer = QTimer(self)
         self._timer.setInterval(config.frame_interval_ms)
@@ -105,7 +151,7 @@ class LocalCameraMicAdapter(QObject):
             options = vision.FaceLandmarkerOptions(
                 base_options=BaseOptions(model_asset_path=str(model_path)),
                 running_mode=vision.RunningMode.VIDEO,
-                num_faces=1,
+                num_faces=3,
                 min_face_detection_confidence=0.5,
                 min_face_presence_confidence=0.5,
                 min_tracking_confidence=0.5,
@@ -159,11 +205,12 @@ class LocalCameraMicAdapter(QObject):
             self._hand_landmarker.close()
 
     def _on_audio(self, indata, frames, time_info, status) -> None:  # noqa: ANN001
-        samples = np.asarray(indata, dtype=np.float32)
+        samples = np.asarray(indata, dtype=np.float32).reshape(-1)
         energy = float(np.sqrt(np.mean(np.square(samples)))) if samples.size else 0.0
         if energy < self._noise_floor * 2.0:
             self._noise_floor = (self._noise_floor * 0.98) + (energy * 0.02)
         self._audio_energy = energy
+        self._audio_speech_quality = self._speech_quality_score(samples, self._config.audio_sample_rate)
 
     def _poll(self) -> None:
         if self._capture is None or not self._capture.isOpened():
@@ -195,6 +242,9 @@ class LocalCameraMicAdapter(QObject):
             distance_m = mesh_result["distance_m"]
             lip_motion = mesh_result["lip_motion"]
             self._draw_face_mesh_overlays(rgb, mesh_result)
+            if mesh_result.get("multi_person_ambiguous"):
+                gaze_score = 0.0
+                lip_motion = 0.0
         elif face is not None:
             x, y, w, h = face
             center_x = x + (w / 2.0)
@@ -221,7 +271,7 @@ class LocalCameraMicAdapter(QObject):
 
         frame = MultimodalFrame(
             timestamp_ms=int(time.time() * 1000),
-            user_id="local_user" if face_visible else None,
+            user_id=mesh_result.get("candidate_id") if mesh_result is not None and face_visible else ("local_user" if face_visible else None),
             has_voice=has_voice,
             voice_energy=min(1.0, self._audio_energy / max(self._config.min_audio_energy * 4.0, 1e-6)),
             speech_like_score=speech_like,
@@ -232,6 +282,9 @@ class LocalCameraMicAdapter(QObject):
             gaze_to_loona_score=gaze_score,
             lip_movement_score=lip_score,
             is_attention_target=face_visible and gaze_score >= 0.55,
+            target_track_id=mesh_result.get("candidate_id") if mesh_result is not None else None,
+            multi_person_count=int(mesh_result.get("multi_person_count", 0)) if mesh_result is not None else 0,
+            multi_person_ambiguous=bool(mesh_result.get("multi_person_ambiguous", False)) if mesh_result is not None else False,
             scene_type="local_camera_mic",
             background_audio_score=0.0 if face_visible else min(1.0, speech_like),
         )
@@ -251,7 +304,31 @@ class LocalCameraMicAdapter(QObject):
 
     def _speech_score(self) -> float:
         adjusted = max(0.0, self._audio_energy - (self._noise_floor * 1.5))
-        return max(0.0, min(1.0, adjusted / max(self._config.min_audio_energy, 1e-6)))
+        energy_score = max(0.0, min(1.0, adjusted / max(self._config.min_audio_energy, 1e-6)))
+        return energy_score * self._audio_speech_quality
+
+    def _speech_quality_score(self, samples: np.ndarray, sample_rate: int) -> float:
+        if samples.size < 32:
+            return 0.0
+        centered = samples.astype(np.float32) - float(np.mean(samples))
+        energy = float(np.sqrt(np.mean(np.square(centered))))
+        if energy <= 1e-6:
+            return 0.0
+
+        signs = np.signbit(centered)
+        zero_crossing_rate = float(np.mean(signs[1:] != signs[:-1])) if centered.size > 1 else 0.0
+
+        windowed = centered * np.hanning(centered.size).astype(np.float32)
+        spectrum = np.abs(np.fft.rfft(windowed)) + 1e-9
+        spectral_flatness = float(np.exp(np.mean(np.log(spectrum))) / np.mean(spectrum))
+        frequencies = np.fft.rfftfreq(centered.size, d=1.0 / float(sample_rate))
+        centroid = float(np.sum(frequencies * spectrum) / np.sum(spectrum)) if np.sum(spectrum) > 0 else 0.0
+        centroid_ratio = centroid / max(sample_rate / 2.0, 1.0)
+
+        tonal_score = 1.0 - _clamp_local((spectral_flatness - 0.35) / 0.35)
+        voicing_score = 1.0 - _clamp_local((zero_crossing_rate - 0.16) / 0.16)
+        low_band_score = 1.0 - _clamp_local((centroid_ratio - 0.45) / 0.30)
+        return _clamp_local(0.15 + (0.45 * tonal_score) + (0.25 * voicing_score) + (0.15 * low_band_score))
 
     def _detect_face_mesh(self, rgb: np.ndarray) -> dict[str, Any] | None:
         if self._face_mesh is None or mp is None:
@@ -263,39 +340,86 @@ class LocalCameraMicAdapter(QObject):
         hand_result = self._detect_hands(mp_image, timestamp_ms)
         if not result.face_landmarks:
             self._prev_lip_open_ratio = None
+            self._prev_lip_open_ratios.clear()
+            self._mouth_motion_histories.clear()
+            self._gaze_histories.clear()
+            self._gaze_states.clear()
             return None
 
-        landmarks = result.face_landmarks[0]
         height, width = rgb.shape[:2]
+        candidates = [
+            self._build_face_mesh_candidate(result, face_index, rgb, hand_result, width, height)
+            for face_index in range(len(result.face_landmarks))
+        ]
+        candidates = [candidate for candidate in candidates if candidate is not None]
+        if not candidates:
+            return None
+        selected, ambiguous = self._select_face_mesh_candidate(candidates)
+        if selected is None:
+            selected = max(candidates, key=lambda candidate: candidate["candidate_score"])
+            selected = selected.copy()
+            selected["gaze_score"] = 0.0
+            selected["lip_motion"] = 0.0
+
+        selected["candidates"] = candidates
+        selected["multi_person_count"] = len(candidates)
+        selected["multi_person_ambiguous"] = ambiguous
+        return selected
+
+    def _build_face_mesh_candidate(
+        self,
+        result: Any,
+        face_index: int,
+        rgb: np.ndarray,
+        hand_result: Any | None,
+        width: int,
+        height: int,
+    ) -> dict[str, Any] | None:
+        landmarks = result.face_landmarks[face_index]
         points = self._landmark_points(landmarks, width, height, range(len(landmarks)))
         face = self._points_bbox(points)
         face_center_x = face[0] + (face[2] / 2.0)
         frame_center_x = width / 2.0
         normalized_offset = (face_center_x - frame_center_x) / frame_center_x
         face_center_score = max(0.0, min(1.0, 1.0 - abs(normalized_offset)))
-        matrix_yaw_deg = self._face_matrix_yaw_deg(result)
+        matrix_yaw_deg = self._face_matrix_yaw_deg(result, face_index=face_index)
         head_yaw_deg = matrix_yaw_deg if matrix_yaw_deg is not None else float(normalized_offset * 35.0)
         side_profile = self._is_side_profile(landmarks, width, height, head_yaw_deg)
+        candidate_id = f"local_user_{face_index}"
 
         eye_occlusion = self._eye_occlusion_state(landmarks, rgb, hand_result, width, height)
         mouth_occluded = self._mouth_is_occluded(landmarks, rgb, hand_result, width, height)
         if mouth_occluded:
-            self._prev_lip_open_ratio = None
-            self._mouth_motion_history.clear()
+            self._prev_lip_open_ratios.pop(candidate_id, None)
+            self._mouth_motion_histories.pop(candidate_id, None)
             lip_motion = 0.0
         else:
-            lip_motion = self._estimate_mesh_lip_motion(landmarks, width, height)
-        gaze_score = self._estimate_mesh_gaze_score(landmarks, width, height, face_center_score, eye_occlusion)
+            lip_motion = self._estimate_mesh_lip_motion(landmarks, width, height, candidate_id=candidate_id)
+        raw_gaze_score = self._estimate_mesh_gaze_score(landmarks, width, height, face_center_score, eye_occlusion)
+        gaze_score = self._stabilized_gaze_score(candidate_id, raw_gaze_score, eye_occlusion)
+        gaze_active = self._stable_gaze_state(candidate_id, gaze_score)
         distance_m = max(0.35, min(3.0, 120.0 / max(float(face[2]), 1.0)))
+        direction_deg = float(normalized_offset * 35.0)
+        candidate_score = self._candidate_score(
+            lip_motion=lip_motion,
+            gaze_score=gaze_score,
+            head_yaw_deg=head_yaw_deg,
+            direction_deg=direction_deg,
+            distance_m=distance_m,
+            mouth_occluded=mouth_occluded,
+        )
 
         return {
+            "candidate_id": candidate_id,
+            "candidate_score": candidate_score,
             "face": face,
             "landmarks": landmarks,
             "frame_width": width,
             "frame_height": height,
-            "direction_deg": float(normalized_offset * 35.0),
+            "direction_deg": direction_deg,
             "head_yaw_deg": head_yaw_deg,
             "gaze_score": gaze_score,
+            "gaze_active": gaze_active,
             "distance_m": distance_m,
             "lip_motion": lip_motion,
             "eye_occlusion": eye_occlusion,
@@ -303,16 +427,51 @@ class LocalCameraMicAdapter(QObject):
             "side_profile": side_profile,
         }
 
+    def _select_face_mesh_candidate(self, candidates: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, bool]:
+        eligible = [candidate for candidate in candidates if candidate["candidate_score"] > 0.0]
+        if not eligible:
+            return None, len(candidates) > 1
+        ranked = sorted(eligible, key=lambda candidate: candidate["candidate_score"], reverse=True)
+        if len(ranked) >= 2:
+            lip_gap = ranked[0].get("lip_motion", 0.0) - ranked[1].get("lip_motion", 0.0)
+            if lip_gap >= MULTI_PERSON_LIP_DOMINANCE_MARGIN and ranked[0].get("lip_motion", 0.0) >= self._config.min_mouth_motion:
+                return ranked[0], False
+        if len(ranked) >= 2 and ranked[0]["candidate_score"] - ranked[1]["candidate_score"] < MULTI_PERSON_SELECTION_MARGIN:
+            return None, True
+        return ranked[0], False
+
+    def _candidate_score(
+        self,
+        *,
+        lip_motion: float,
+        gaze_score: float,
+        head_yaw_deg: float | None,
+        direction_deg: float | None,
+        distance_m: float | None,
+        mouth_occluded: bool,
+    ) -> float:
+        if mouth_occluded or lip_motion < self._config.min_mouth_motion:
+            return 0.0
+        if head_yaw_deg is not None and abs(head_yaw_deg) > MAX_HEAD_YAW_DEG:
+            return 0.0
+        return _clamp_local(
+            (lip_motion * 0.45)
+            + (gaze_score * 0.22)
+            + (_head_facing_score_local(head_yaw_deg) * 0.18)
+            + (_direction_score_local(direction_deg) * 0.10)
+            + (_distance_score_local(distance_m) * 0.05)
+        )
+
     def _detect_hands(self, mp_image: Any, timestamp_ms: int) -> Any | None:
         if self._hand_landmarker is None:
             return None
         return self._hand_landmarker.detect_for_video(mp_image, timestamp_ms)
 
-    def _face_matrix_yaw_deg(self, result: Any) -> float | None:
+    def _face_matrix_yaw_deg(self, result: Any, face_index: int = 0) -> float | None:
         matrices = getattr(result, "facial_transformation_matrixes", None)
-        if not matrices:
+        if not matrices or face_index >= len(matrices):
             return None
-        matrix = np.asarray(matrices[0], dtype=np.float32)
+        matrix = np.asarray(matrices[face_index], dtype=np.float32)
         if matrix.shape[0] < 3 or matrix.shape[1] < 3:
             return None
         rotation = matrix[:3, :3]
@@ -349,7 +508,7 @@ class LocalCameraMicAdapter(QObject):
         bottom = max(y_values)
         return (left, top, max(1, right - left), max(1, bottom - top))
 
-    def _estimate_mesh_lip_motion(self, landmarks, width: int, height: int) -> float:  # noqa: ANN001
+    def _estimate_mesh_lip_motion(self, landmarks, width: int, height: int, candidate_id: str = "local_user") -> float:  # noqa: ANN001
         upper_lip = landmarks[13]
         lower_lip = landmarks[14]
         left_mouth = landmarks[61]
@@ -357,11 +516,15 @@ class LocalCameraMicAdapter(QObject):
         lip_open_px = abs((lower_lip.y - upper_lip.y) * height)
         mouth_width_px = max(abs((right_mouth.x - left_mouth.x) * width), 1.0)
         open_ratio = lip_open_px / mouth_width_px
-        delta = 0.0 if self._prev_lip_open_ratio is None else abs(open_ratio - self._prev_lip_open_ratio)
+        previous_ratio = self._prev_lip_open_ratios.get(candidate_id)
+        delta = 0.0 if previous_ratio is None else abs(open_ratio - previous_ratio)
+        self._prev_lip_open_ratios[candidate_id] = open_ratio
         self._prev_lip_open_ratio = open_ratio
         score = max(0.0, delta - 0.003) * 9.0
-        self._mouth_motion_history.append(float(score))
-        return max(0.0, min(1.0, float(np.mean(self._mouth_motion_history))))
+        history = self._mouth_motion_histories.setdefault(candidate_id, deque(maxlen=5))
+        history.append(float(score))
+        self._mouth_motion_history = history
+        return max(0.0, min(1.0, float(np.mean(history))))
 
     def _estimate_mesh_gaze_score(
         self,
@@ -394,6 +557,24 @@ class LocalCameraMicAdapter(QObject):
             return 0.0
         iris_score = sum(eye_scores) / len(eye_scores)
         return max(0.0, min(1.0, (iris_score * 0.62) + (openness_score * 0.18) + (face_center_score * 0.20)))
+
+    def _stabilized_gaze_score(self, candidate_id: str, gaze_score: float, eye_occlusion: dict[str, bool]) -> float:
+        if eye_occlusion.get("left", False) and eye_occlusion.get("right", False):
+            self._gaze_histories.pop(candidate_id, None)
+            self._gaze_states.pop(candidate_id, None)
+            return 0.0
+        history = self._gaze_histories.setdefault(candidate_id, deque(maxlen=4))
+        history.append(_clamp_local(gaze_score))
+        return float(sum(history) / len(history))
+
+    def _stable_gaze_state(self, candidate_id: str, gaze_score: float) -> bool:
+        previous = self._gaze_states.get(candidate_id, False)
+        if previous:
+            active = gaze_score >= GAZE_EXIT_THRESHOLD
+        else:
+            active = gaze_score >= GAZE_ENTER_THRESHOLD
+        self._gaze_states[candidate_id] = active
+        return active
 
     def _eye_occlusion_state(
         self,
@@ -618,6 +799,10 @@ class LocalCameraMicAdapter(QObject):
             self._prev_mouth_gray = None
             self._prev_lip_open_ratio = None
             self._mouth_motion_history.clear()
+            self._prev_lip_open_ratios.clear()
+            self._mouth_motion_histories.clear()
+            self._gaze_histories.clear()
+            self._gaze_states.clear()
             return None
         return tuple(max(faces, key=lambda item: item[2] * item[3]))
 
@@ -632,10 +817,17 @@ class LocalCameraMicAdapter(QObject):
         mouth_occluded = bool(mesh_result.get("mouth_occluded", False))
         head_angle_valid = self._head_angle_is_valid(mesh_result["head_yaw_deg"])
         face_color = HUD_GREEN if head_angle_valid else HUD_RED
+        if mesh_result.get("multi_person_ambiguous"):
+            face_color = HUD_RED
         mouth_color = HUD_GREEN if head_angle_valid and self._lip_is_moving(lip_motion) else HUD_RED
-        gaze_color = HUD_GREEN if head_angle_valid and self._eyes_are_gazing(gaze_score) else HUD_RED
+        gaze_active = bool(mesh_result.get("gaze_active", self._eyes_are_gazing(gaze_score)))
+        gaze_color = HUD_GREEN if head_angle_valid and gaze_active else HUD_RED
 
         side_profile = bool(mesh_result.get("side_profile", False))
+        for candidate in mesh_result.get("candidates", []):
+            if candidate.get("candidate_id") != mesh_result.get("candidate_id"):
+                self._draw_secondary_face_mesh_overlay(rgb, candidate)
+
         face_landmark_indices = range(len(landmarks))
         face_reference_points = self._landmark_points(landmarks, width, height, FACE_OVAL_POINTS) if side_profile else None
         face_points = self._outer_face_hull(
@@ -669,6 +861,21 @@ class LocalCameraMicAdapter(QObject):
             1,
             cv2.LINE_AA,
         )
+
+    def _draw_secondary_face_mesh_overlay(self, rgb: np.ndarray, candidate: dict[str, Any]) -> None:
+        landmarks = candidate["landmarks"]
+        width = candidate["frame_width"]
+        height = candidate["frame_height"]
+        side_profile = bool(candidate.get("side_profile", False))
+        reference_points = self._landmark_points(landmarks, width, height, FACE_OVAL_POINTS) if side_profile else None
+        face_points = self._outer_face_hull(
+            self._landmark_points(landmarks, width, height, range(len(landmarks))),
+            width,
+            height,
+            side_profile=side_profile,
+            reference_points=reference_points,
+        )
+        self._draw_polyline(rgb, face_points, HUD_DIM, closed=True, dashed=True, node_step=6, node_radius=1)
 
     def _outer_face_hull(
         self,
@@ -931,7 +1138,7 @@ class LocalCameraMicAdapter(QObject):
         return lip_motion >= self._config.min_mouth_motion
 
     def _eyes_are_gazing(self, gaze_score: float) -> bool:
-        return gaze_score >= 0.55
+        return gaze_score >= GAZE_ENTER_THRESHOLD
 
     def _head_angle_is_valid(self, head_yaw_deg: float | None) -> bool:
         return head_yaw_deg is not None and abs(head_yaw_deg) <= MAX_HEAD_YAW_DEG

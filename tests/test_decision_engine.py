@@ -205,6 +205,59 @@ def test_utterance_with_only_one_lip_motion_spike_is_rejected() -> None:
     assert "no_lip_voice_sync" in decision.reject_reasons
 
 
+def test_multi_person_ambiguous_utterance_is_rejected() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    decision = engine.decide_utterance(
+        [
+            MultimodalFrame(
+                timestamp_ms=1,
+                user_id="local_user_0",
+                has_voice=True,
+                voice_energy=0.9,
+                speech_like_score=0.9,
+                sound_direction_deg=0,
+                sound_distance_m=0.8,
+                face_visible=True,
+                head_yaw_deg=0,
+                gaze_to_loona_score=0.9,
+                lip_movement_score=0.9,
+                is_attention_target=True,
+                target_track_id="local_user_0",
+                multi_person_count=2,
+                multi_person_ambiguous=True,
+            )
+        ]
+    )
+    assert decision.wakeup is False
+    assert "multi_person_ambiguous" in decision.reject_reasons
+
+
+def test_utterance_with_track_switch_is_rejected() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    frames = [
+        MultimodalFrame(
+            timestamp_ms=timestamp_ms,
+            user_id=track_id,
+            has_voice=True,
+            voice_energy=0.9,
+            speech_like_score=0.9,
+            sound_direction_deg=0,
+            sound_distance_m=0.8,
+            face_visible=True,
+            head_yaw_deg=0,
+            gaze_to_loona_score=0.9,
+            lip_movement_score=0.9,
+            is_attention_target=True,
+            target_track_id=track_id,
+            multi_person_count=2,
+        )
+        for timestamp_ms, track_id in ((0, "local_user_0"), (120, "local_user_1"), (240, "local_user_1"))
+    ]
+    decision = engine.decide_utterance(frames)
+    assert decision.wakeup is False
+    assert "multi_person_ambiguous" in decision.reject_reasons
+
+
 def test_head_angle_over_30_degrees_is_rejected_even_with_voice() -> None:
     engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
     decision = engine.decide_utterance(
