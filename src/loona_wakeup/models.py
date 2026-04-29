@@ -87,6 +87,7 @@ class WakeupConfig:
     min_lip_score: float = 0.24
     min_visual_intent_score: float = 0.45
     max_head_yaw_deg: float = 30.0
+    max_head_pitch_deg: float = 30.0
     require_face_visible: bool = True
     require_lip_sync: bool = True
     min_consecutive_wakeup_frames: int = 3

@@ -71,6 +71,7 @@ HUD_RED = (255, 82, 104)
 HUD_TEXT = (230, 237, 243)
 HUD_DIM = (96, 110, 124)
 MAX_HEAD_YAW_DEG = 30.0
+MAX_HEAD_PITCH_DEG = 30.0
 EYE_OCCLUSION_EVIDENCE_THRESHOLD = 0.06
 MOUTH_OCCLUSION_EVIDENCE_THRESHOLD = 0.05
 MULTI_PERSON_SELECTION_MARGIN = 0.08
@@ -239,6 +240,7 @@ class LocalCameraMicAdapter(QObject):
 
         face_visible = face is not None
         head_yaw_deg: float | None = None
+        head_pitch_deg: float | None = None
         gaze_score = 0.0
         lip_motion = 0.0
         distance_m: float | None = None
@@ -248,6 +250,7 @@ class LocalCameraMicAdapter(QObject):
         if mesh_result is not None:
             direction_deg = mesh_result["direction_deg"]
             head_yaw_deg = mesh_result["head_yaw_deg"]
+            head_pitch_deg = mesh_result.get("head_pitch_deg")
             gaze_score = mesh_result["gaze_score"]
             distance_m = mesh_result["distance_m"]
             lip_motion = mesh_result["lip_motion"]
@@ -292,6 +295,7 @@ class LocalCameraMicAdapter(QObject):
             sound_distance_m=distance_m,
             face_visible=face_visible,
             head_yaw_deg=head_yaw_deg,
+            head_pitch_deg=head_pitch_deg,
             gaze_to_loona_score=gaze_score,
             lip_movement_score=lip_score,
             is_attention_target=face_visible and gaze_score >= 0.55,
@@ -431,7 +435,9 @@ class LocalCameraMicAdapter(QObject):
         normalized_offset = (face_center_x - frame_center_x) / frame_center_x
         face_center_score = max(0.0, min(1.0, 1.0 - abs(normalized_offset)))
         matrix_yaw_deg = self._face_matrix_yaw_deg(result, face_index=face_index)
+        matrix_pitch_deg = self._face_matrix_pitch_deg(result, face_index=face_index)
         head_yaw_deg = matrix_yaw_deg if matrix_yaw_deg is not None else float(normalized_offset * 35.0)
+        head_pitch_deg = matrix_pitch_deg
         side_profile = self._is_side_profile(landmarks, width, height, head_yaw_deg)
         candidate_id = self._assign_track_id(face, used_track_ids)
 
@@ -452,6 +458,7 @@ class LocalCameraMicAdapter(QObject):
             lip_motion=lip_motion,
             gaze_score=gaze_score,
             head_yaw_deg=head_yaw_deg,
+            head_pitch_deg=head_pitch_deg,
             direction_deg=direction_deg,
             distance_m=distance_m,
             mouth_occluded=mouth_occluded,
@@ -468,6 +475,7 @@ class LocalCameraMicAdapter(QObject):
             "face_direction_deg": direction_deg,
             "sound_face_match_score": 1.0,
             "head_yaw_deg": head_yaw_deg,
+            "head_pitch_deg": head_pitch_deg,
             "gaze_score": gaze_score,
             "gaze_active": gaze_active,
             "distance_m": distance_m,
@@ -581,6 +589,7 @@ class LocalCameraMicAdapter(QObject):
         lip_motion: float,
         gaze_score: float,
         head_yaw_deg: float | None,
+        head_pitch_deg: float | None,
         direction_deg: float | None,
         distance_m: float | None,
         mouth_occluded: bool,
@@ -588,6 +597,8 @@ class LocalCameraMicAdapter(QObject):
         if mouth_occluded or lip_motion < self._config.min_mouth_motion:
             return 0.0
         if head_yaw_deg is not None and abs(head_yaw_deg) > MAX_HEAD_YAW_DEG:
+            return 0.0
+        if head_pitch_deg is not None and abs(head_pitch_deg) > MAX_HEAD_PITCH_DEG:
             return 0.0
         return _clamp_local(
             (lip_motion * 0.45)
@@ -612,6 +623,17 @@ class LocalCameraMicAdapter(QObject):
         rotation = matrix[:3, :3]
         yaw_rad = np.arctan2(rotation[0, 2], rotation[2, 2])
         return float(np.degrees(yaw_rad))
+
+    def _face_matrix_pitch_deg(self, result: Any, face_index: int = 0) -> float | None:
+        matrices = getattr(result, "facial_transformation_matrixes", None)
+        if not matrices or face_index >= len(matrices):
+            return None
+        matrix = np.asarray(matrices[face_index], dtype=np.float32)
+        if matrix.shape[0] < 3 or matrix.shape[1] < 3:
+            return None
+        rotation = matrix[:3, :3]
+        pitch_rad = np.arctan2(-rotation[1, 2], rotation[1, 1])
+        return float(np.degrees(pitch_rad))
 
     def _is_side_profile(self, landmarks, width: int, height: int, head_yaw_deg: float | None) -> bool:  # noqa: ANN001
         if head_yaw_deg is not None and abs(head_yaw_deg) >= 12.0:
@@ -974,6 +996,7 @@ class LocalCameraMicAdapter(QObject):
         height = mesh_result["frame_height"]
         lip_motion = mesh_result["lip_motion"]
         gaze_score = mesh_result["gaze_score"]
+        head_pitch_deg = mesh_result.get("head_pitch_deg")
         face = mesh_result["face"]
         eye_occlusion = mesh_result.get("eye_occlusion", {"left": False, "right": False})
         mouth_occluded = bool(mesh_result.get("mouth_occluded", False))
@@ -1015,7 +1038,7 @@ class LocalCameraMicAdapter(QObject):
 
         cv2.putText(
             rgb,
-            f"mesh  lip {lip_motion:.3f}  gaze {gaze_score:.2f}  yaw {(mesh_result['head_yaw_deg'] or 0.0):.0f}  {'side' if side_profile else 'front'}",
+            f"mesh  lip {lip_motion:.3f}  gaze {gaze_score:.2f}  yaw {(mesh_result['head_yaw_deg'] or 0.0):.0f}  pitch {(head_pitch_deg or 0.0):.0f}  {'side' if side_profile else 'front'}",
             (face[0], max(20, face[1] - 8)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.5,

@@ -134,6 +134,11 @@ class WakeupDecisionEngine:
             key=abs,
             default=None,
         )
+        strongest_head_pitch = max(
+            (frame.head_pitch_deg for frame in source_frames if frame.head_pitch_deg is not None),
+            key=abs,
+            default=None,
+        )
         best_distance = min(
             (frame.sound_distance_m for frame in source_frames if frame.sound_distance_m is not None),
             default=None,
@@ -161,7 +166,7 @@ class WakeupDecisionEngine:
             sound_distance_m=best_distance,
             face_visible=any(frame.face_visible for frame in source_frames),
             head_yaw_deg=strongest_head_yaw if strongest_head_yaw is not None else best_visual.head_yaw_deg,
-            head_pitch_deg=best_visual.head_pitch_deg,
+            head_pitch_deg=strongest_head_pitch if strongest_head_pitch is not None else best_visual.head_pitch_deg,
             gaze_to_loona_score=max(frame.gaze_to_loona_score for frame in source_frames),
             lip_movement_score=stable_lip_score,
             is_attention_target=any(frame.is_attention_target for frame in source_frames),
@@ -311,6 +316,8 @@ class WakeupDecisionEngine:
         if self.wakeup_config.require_face_visible and not frame.face_visible:
             reasons.append("face_not_visible")
         if frame.head_yaw_deg is not None and abs(frame.head_yaw_deg) > self.wakeup_config.max_head_yaw_deg:
+            reasons.append("head_angle_too_large")
+        if frame.head_pitch_deg is not None and abs(frame.head_pitch_deg) > self.wakeup_config.max_head_pitch_deg:
             reasons.append("head_angle_too_large")
         if frame.sound_distance_m is not None and frame.sound_distance_m > self.wakeup_config.max_distance_m:
             reasons.append("distance_too_far")

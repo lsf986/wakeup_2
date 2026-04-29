@@ -464,6 +464,23 @@ def test_candidate_score_requires_lip_motion() -> None:
             lip_motion=0.0,
             gaze_score=1.0,
             head_yaw_deg=0.0,
+            head_pitch_deg=0.0,
+            direction_deg=0.0,
+            distance_m=0.8,
+            mouth_occluded=False,
+        )
+        == 0.0
+    )
+
+
+def test_candidate_score_rejects_large_head_pitch() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig(min_mouth_motion=0.008))
+    assert (
+        adapter._candidate_score(
+            lip_motion=0.8,
+            gaze_score=1.0,
+            head_yaw_deg=0.0,
+            head_pitch_deg=31.0,
             direction_deg=0.0,
             distance_m=0.8,
             mouth_occluded=False,
@@ -638,3 +655,19 @@ def test_face_matrix_yaw_uses_3d_rotation_matrix() -> None:
     )
     result = SimpleNamespace(facial_transformation_matrixes=[matrix])
     assert adapter._face_matrix_yaw_deg(result) == pytest.approx(35.0)
+
+
+def test_face_matrix_pitch_uses_3d_rotation_matrix() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig())
+    pitch_rad = np.deg2rad(35.0)
+    matrix = np.array(
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, np.cos(pitch_rad), -np.sin(pitch_rad), 0.0],
+            [0.0, np.sin(pitch_rad), np.cos(pitch_rad), 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        dtype="float32",
+    )
+    result = SimpleNamespace(facial_transformation_matrixes=[matrix])
+    assert adapter._face_matrix_pitch_deg(result) == pytest.approx(35.0)

@@ -583,3 +583,28 @@ def test_head_angle_over_30_degrees_is_rejected_even_with_voice() -> None:
     )
     assert decision.wakeup is False
     assert "head_angle_too_large" in decision.reject_reasons
+
+
+def test_head_pitch_over_30_degrees_is_rejected_even_with_voice() -> None:
+    engine = WakeupDecisionEngine(WakeupConfig(), WeightConfig())
+    decision = engine.decide_utterance(
+        [
+            MultimodalFrame(
+                timestamp_ms=1,
+                user_id="user_01",
+                has_voice=True,
+                voice_energy=0.9,
+                speech_like_score=0.9,
+                sound_direction_deg=0,
+                sound_distance_m=0.8,
+                face_visible=True,
+                head_yaw_deg=0,
+                head_pitch_deg=31,
+                gaze_to_loona_score=0.9,
+                lip_movement_score=0.9,
+                is_attention_target=True,
+            )
+        ]
+    )
+    assert decision.wakeup is False
+    assert "head_angle_too_large" in decision.reject_reasons
