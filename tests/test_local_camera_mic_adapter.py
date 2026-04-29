@@ -282,6 +282,41 @@ def test_mouth_is_occluded_when_hand_landmarks_overlap_lip_region() -> None:
     assert adapter._mouth_is_occluded(landmarks, rgb, hand_result, width=200, height=200) is True
 
 
+def test_mouth_is_occluded_when_hand_bbox_covers_lips_without_inner_landmark() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig())
+    landmarks = _landmarks()
+    _set_lip_boxes(landmarks)
+    rgb = np.full((200, 200, 3), 180, dtype=np.uint8)
+    hand = [
+        SimpleNamespace(x=0.37, y=0.56),
+        SimpleNamespace(x=0.66, y=0.56),
+        SimpleNamespace(x=0.66, y=0.76),
+        SimpleNamespace(x=0.37, y=0.76),
+    ]
+    hand_result = SimpleNamespace(hand_landmarks=[hand])
+
+    assert adapter._mouth_is_occluded(landmarks, rgb, hand_result, width=200, height=200) is True
+
+
+def test_mouth_is_not_occluded_when_hand_bbox_is_away_from_lips() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig())
+    landmarks = _landmarks()
+    _set_lip_boxes(landmarks)
+    rgb = np.full((200, 200, 3), 180, dtype=np.uint8)
+    cv2 = pytest.importorskip("cv2")
+    cv2.ellipse(rgb, (102, 132), (36, 10), 0, 0, 360, (55, 55, 55), 2)
+    cv2.line(rgb, (82, 132), (122, 132), (45, 45, 45), 1)
+    hand = [
+        SimpleNamespace(x=0.05, y=0.08),
+        SimpleNamespace(x=0.20, y=0.08),
+        SimpleNamespace(x=0.20, y=0.22),
+        SimpleNamespace(x=0.05, y=0.22),
+    ]
+    hand_result = SimpleNamespace(hand_landmarks=[hand])
+
+    assert adapter._mouth_is_occluded(landmarks, rgb, hand_result, width=200, height=200) is False
+
+
 def test_mouth_visual_evidence_is_low_for_generic_occluder() -> None:
     adapter = LocalCameraMicAdapter(LocalInputConfig())
     rgb = np.full((120, 160, 3), 125, dtype=np.uint8)
@@ -319,6 +354,31 @@ def test_multi_person_candidate_selection_rejects_close_scores() -> None:
     selected, ambiguous = adapter._select_face_mesh_candidate(candidates)
     assert selected is None
     assert ambiguous is True
+
+
+def test_multi_person_candidate_selection_allows_clear_direct_attention() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig(min_mouth_motion=0.008))
+    candidates = [
+        {
+            "candidate_id": "local_user_0",
+            "candidate_score": 0.52,
+            "lip_motion": 0.04,
+            "gaze_score": 0.78,
+            "head_yaw_deg": 3.0,
+            "direction_deg": 2.0,
+        },
+        {
+            "candidate_id": "local_user_1",
+            "candidate_score": 0.49,
+            "lip_motion": 0.038,
+            "gaze_score": 0.18,
+            "head_yaw_deg": 4.0,
+            "direction_deg": 3.0,
+        },
+    ]
+    selected, ambiguous = adapter._select_face_mesh_candidate(candidates)
+    assert selected is candidates[0]
+    assert ambiguous is False
 
 
 def test_multi_person_candidate_selection_allows_lip_dominance_with_close_scores() -> None:

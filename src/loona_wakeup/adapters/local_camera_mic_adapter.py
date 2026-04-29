@@ -483,12 +483,28 @@ class LocalCameraMicAdapter(QObject):
             return None, len(candidates) > 1
         ranked = sorted(eligible, key=lambda candidate: candidate["candidate_score"], reverse=True)
         if len(ranked) >= 2:
+            if self._candidate_has_clear_direct_attention(ranked[0], ranked[1]):
+                return ranked[0], False
             lip_gap = ranked[0].get("lip_motion", 0.0) - ranked[1].get("lip_motion", 0.0)
             if lip_gap >= MULTI_PERSON_LIP_DOMINANCE_MARGIN and ranked[0].get("lip_motion", 0.0) >= self._config.min_mouth_motion:
                 return ranked[0], False
         if len(ranked) >= 2 and ranked[0]["candidate_score"] - ranked[1]["candidate_score"] < MULTI_PERSON_SELECTION_MARGIN:
             return None, True
         return ranked[0], False
+
+    def _candidate_has_clear_direct_attention(self, candidate: dict[str, Any], runner_up: dict[str, Any]) -> bool:
+        lip_motion = candidate.get("lip_motion", 0.0)
+        if lip_motion < self._config.min_mouth_motion:
+            return False
+
+        gaze_score = _clamp_local(candidate.get("gaze_score", 0.0))
+        runner_up_gaze = _clamp_local(runner_up.get("gaze_score", 0.0))
+        if gaze_score < GAZE_ENTER_THRESHOLD or gaze_score - runner_up_gaze < 0.20:
+            return False
+
+        head_score = _head_facing_score_local(candidate.get("head_yaw_deg"))
+        direction_score = _direction_score_local(candidate.get("direction_deg"))
+        return max(head_score, direction_score) >= 0.70
 
     def _human_conversation_score(self, candidates: list[dict[str, Any]], selected: dict[str, Any], ambiguous: bool) -> float:
         if len(candidates) < 2:
@@ -736,7 +752,14 @@ class LocalCameraMicAdapter(QObject):
         height: int,
     ) -> bool:  # noqa: ANN001
         mouth_points = self._landmark_points(landmarks, width, height, OUTER_LIP_POINTS + INNER_LIP_POINTS)
-        if self._points_are_occluded_by_hand(mouth_points, hand_result, width, height, padding_ratio=0.45):
+        if self._points_are_occluded_by_hand(
+            mouth_points,
+            hand_result,
+            width,
+            height,
+            padding_ratio=0.65,
+            min_region_overlap_ratio=0.18,
+        ):
             return True
         return self._mouth_visual_evidence_score(rgb, mouth_points) < MOUTH_OCCLUSION_EVIDENCE_THRESHOLD
 
@@ -764,6 +787,7 @@ class LocalCameraMicAdapter(QObject):
         height: int,
         *,
         padding_ratio: float,
+        min_region_overlap_ratio: float = 0.0,
     ) -> bool:
         hand_landmarks = getattr(hand_result, "hand_landmarks", None)
         if not hand_landmarks:
@@ -771,7 +795,13 @@ class LocalCameraMicAdapter(QObject):
         region_box = self._expanded_bbox(points, width, height, padding_ratio=padding_ratio)
         hand_points = []
         for hand in hand_landmarks:
-            hand_points.extend((int(point.x * width), int(point.y * height)) for point in hand)
+            current_hand_points = [(int(point.x * width), int(point.y * height)) for point in hand]
+            hand_points.extend(current_hand_points)
+            if min_region_overlap_ratio > 0.0 and self._bbox_overlap_ratio(
+                region_box,
+                self._expanded_bbox(current_hand_points, width, height, padding_ratio=0.12),
+            ) >= min_region_overlap_ratio:
+                return True
         return any(self._point_inside_bbox(point, region_box) for point in hand_points)
 
     def _eye_visual_evidence_score(
@@ -828,6 +858,17 @@ class LocalCameraMicAdapter(QObject):
         x, y = point
         left, top, right, bottom = bbox
         return left <= x <= right and top <= y <= bottom
+
+    def _bbox_overlap_ratio(self, region: tuple[int, int, int, int], other: tuple[int, int, int, int]) -> float:
+        left = max(region[0], other[0])
+        top = max(region[1], other[1])
+        right = min(region[2], other[2])
+        bottom = min(region[3], other[3])
+        if right < left or bottom < top:
+            return 0.0
+        overlap_area = float((right - left + 1) * (bottom - top + 1))
+        region_area = float((region[2] - region[0] + 1) * (region[3] - region[1] + 1))
+        return overlap_area / max(region_area, 1.0)
 
     def _iris_center_score(self, eye_points: list[tuple[int, int]], iris_points: list[tuple[int, int]]) -> float:
         if not eye_points or not iris_points:
