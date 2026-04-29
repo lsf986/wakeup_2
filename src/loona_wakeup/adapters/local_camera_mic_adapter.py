@@ -65,6 +65,7 @@ LEFT_EYE_POINTS = [33, 246, 161, 160, 159, 158, 157, 173, 133, 155, 154, 153, 14
 RIGHT_EYE_POINTS = [263, 466, 388, 387, 386, 385, 384, 398, 362, 382, 381, 380, 374, 373, 390, 249]
 OUTER_LIP_POINTS = [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0, 37, 39, 40, 185]
 INNER_LIP_POINTS = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 415, 310, 311, 312, 13, 82, 81, 80, 191]
+LIP_OPENING_PAIRS = [(13, 14), (82, 87), (81, 178), (80, 88), (312, 317), (311, 402), (310, 318)]
 HUD_GREEN = (78, 255, 166)
 HUD_RED = (255, 82, 104)
 HUD_TEXT = (230, 237, 243)
@@ -78,6 +79,8 @@ GAZE_ENTER_THRESHOLD = 0.55
 GAZE_EXIT_THRESHOLD = 0.48
 TRACK_MATCH_DISTANCE_RATIO = 0.38
 TRACK_MAX_STALE_FRAMES = 8
+LIP_OPEN_RATIO_DEADZONE = 0.012
+LIP_OPEN_RATIO_SCORE_SCALE = 6.5
 
 
 def _clamp_local(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -625,22 +628,23 @@ class LocalCameraMicAdapter(QObject):
         return (left, top, max(1, right - left), max(1, bottom - top))
 
     def _estimate_mesh_lip_motion(self, landmarks, width: int, height: int, candidate_id: str = "local_user") -> float:  # noqa: ANN001
-        upper_lip = landmarks[13]
-        lower_lip = landmarks[14]
-        left_mouth = landmarks[61]
-        right_mouth = landmarks[291]
-        lip_open_px = abs((lower_lip.y - upper_lip.y) * height)
-        mouth_width_px = max(abs((right_mouth.x - left_mouth.x) * width), 1.0)
-        open_ratio = lip_open_px / mouth_width_px
+        open_ratio = self._mesh_lip_open_ratio(landmarks, width, height)
         previous_ratio = self._prev_lip_open_ratios.get(candidate_id)
         delta = 0.0 if previous_ratio is None else abs(open_ratio - previous_ratio)
         self._prev_lip_open_ratios[candidate_id] = open_ratio
         self._prev_lip_open_ratio = open_ratio
-        score = max(0.0, delta - 0.003) * 9.0
+        score = max(0.0, delta - LIP_OPEN_RATIO_DEADZONE) * LIP_OPEN_RATIO_SCORE_SCALE
         history = self._mouth_motion_histories.setdefault(candidate_id, deque(maxlen=5))
         history.append(float(score))
         self._mouth_motion_history = history
         return max(0.0, min(1.0, float(np.mean(history))))
+
+    def _mesh_lip_open_ratio(self, landmarks, width: int, height: int) -> float:  # noqa: ANN001
+        left_mouth = landmarks[61]
+        right_mouth = landmarks[291]
+        mouth_width_px = max(abs((right_mouth.x - left_mouth.x) * width), 1.0)
+        gaps = [abs((landmarks[lower].y - landmarks[upper].y) * height) / mouth_width_px for upper, lower in LIP_OPENING_PAIRS]
+        return float(np.median(gaps)) if gaps else 0.0
 
     def _estimate_mesh_gaze_score(
         self,

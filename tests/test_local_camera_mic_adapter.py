@@ -49,6 +49,15 @@ def _set_lip_boxes(landmarks: list[SimpleNamespace]) -> None:
         landmarks[index] = SimpleNamespace(x=0.45 + ((offset % 5) * 0.025), y=0.635 + ((offset // 5) * 0.010))
 
 
+def _set_inner_mouth_opening(landmarks: list[SimpleNamespace], upper_y: float, lower_y: float, vertical_shift: float = 0.0) -> None:
+    landmarks[61] = SimpleNamespace(x=0.40, y=0.52 + vertical_shift)
+    landmarks[291] = SimpleNamespace(x=0.60, y=0.52 + vertical_shift)
+    for offset, (upper, lower) in enumerate(((13, 14), (82, 87), (81, 178), (80, 88), (312, 317), (311, 402), (310, 318))):
+        x = 0.45 + (offset * 0.016)
+        landmarks[upper] = SimpleNamespace(x=x, y=upper_y + vertical_shift)
+        landmarks[lower] = SimpleNamespace(x=x, y=lower_y + vertical_shift)
+
+
 def test_speech_score_increases_above_noise_floor() -> None:
     adapter = LocalCameraMicAdapter(LocalInputConfig(min_audio_energy=0.01))
     adapter._noise_floor = 0.001
@@ -230,23 +239,36 @@ def test_forehead_contour_does_not_lift_side_profile_edge_too_much() -> None:
 def test_mesh_lip_motion_stays_low_when_mouth_is_static_open() -> None:
     adapter = LocalCameraMicAdapter(LocalInputConfig())
     landmarks = _landmarks()
-    landmarks[13] = SimpleNamespace(x=0.50, y=0.50)
-    landmarks[14] = SimpleNamespace(x=0.50, y=0.54)
-    landmarks[61] = SimpleNamespace(x=0.40, y=0.52)
-    landmarks[291] = SimpleNamespace(x=0.60, y=0.52)
+    _set_inner_mouth_opening(landmarks, upper_y=0.50, lower_y=0.54)
     assert adapter._estimate_mesh_lip_motion(landmarks, width=200, height=200) == 0.0
+    assert adapter._estimate_mesh_lip_motion(landmarks, width=200, height=200) == 0.0
+
+
+def test_mesh_lip_motion_stays_low_when_static_face_moves_vertically() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig())
+    landmarks = _landmarks()
+    _set_inner_mouth_opening(landmarks, upper_y=0.50, lower_y=0.54)
+    assert adapter._estimate_mesh_lip_motion(landmarks, width=200, height=200) == 0.0
+    _set_inner_mouth_opening(landmarks, upper_y=0.50, lower_y=0.54, vertical_shift=0.12)
+    assert adapter._estimate_mesh_lip_motion(landmarks, width=200, height=200) == 0.0
+
+
+def test_mesh_lip_motion_ignores_small_landmark_jitter() -> None:
+    adapter = LocalCameraMicAdapter(LocalInputConfig())
+    landmarks = _landmarks()
+    _set_inner_mouth_opening(landmarks, upper_y=0.50, lower_y=0.54)
+    assert adapter._estimate_mesh_lip_motion(landmarks, width=200, height=200) == 0.0
+    _set_inner_mouth_opening(landmarks, upper_y=0.5005, lower_y=0.5405)
+    landmarks[14] = SimpleNamespace(x=0.45, y=0.5415)
     assert adapter._estimate_mesh_lip_motion(landmarks, width=200, height=200) == 0.0
 
 
 def test_mesh_lip_motion_increases_when_mouth_moves() -> None:
     adapter = LocalCameraMicAdapter(LocalInputConfig())
     landmarks = _landmarks()
-    landmarks[13] = SimpleNamespace(x=0.50, y=0.50)
-    landmarks[14] = SimpleNamespace(x=0.50, y=0.52)
-    landmarks[61] = SimpleNamespace(x=0.40, y=0.52)
-    landmarks[291] = SimpleNamespace(x=0.60, y=0.52)
+    _set_inner_mouth_opening(landmarks, upper_y=0.50, lower_y=0.52)
     adapter._estimate_mesh_lip_motion(landmarks, width=200, height=200)
-    landmarks[14] = SimpleNamespace(x=0.50, y=0.56)
+    _set_inner_mouth_opening(landmarks, upper_y=0.50, lower_y=0.56)
     assert adapter._estimate_mesh_lip_motion(landmarks, width=200, height=200) > 0.1
 
 
